@@ -5,132 +5,589 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Drone Delivery Optimizer</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
   <style>
     body, html {
       margin: 0;
       padding: 0;
       height: 100%;
-      font-family: Arial, sans-serif;
+      font-family: 'Roboto', Arial, sans-serif;
+      color: #333;
     }
     #map {
       width: 100%;
       height: 100vh;
     }
-    .control-panel {
+    
+    /* Sidebar principale */
+    .sidebar {
       position: absolute;
-      top: 10px;
-      right: 10px;
+      top: 0;
+      right: 0;
+      width: 320px;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.95);
+      box-shadow: -2px 0 15px rgba(0, 0, 0, 0.1);
       z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.3s ease;
+      overflow: hidden;
+    }
+    
+    /* Header de la sidebar */
+    .sidebar-header {
+      background: #34495e;
+      color: white;
+      padding: 15px 20px;
+      font-size: 18px;
+      font-weight: 500;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+    
+    .toggle-btn {
+      border: none;
+      background: transparent;
+      color: white;
+      font-size: 20px;
+      cursor: pointer;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    
+    /* Contenu de la sidebar */
+    .sidebar-content {
+      padding: 20px;
+      overflow-y: auto;
+      flex-grow: 1;
+    }
+    
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #ddd;
+      margin-bottom: 20px;
+    }
+    
+    .tab-btn {
+      padding: 10px 15px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: #7f8c8d;
+      position: relative;
+      transition: color 0.3s;
+    }
+    
+    .tab-btn.active {
+      color: #3498db;
+    }
+    
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: #3498db;
+    }
+    
+    .tab-content {
+      display: none;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    /* Status panel */
+    .status-panel {
+      padding: 10px 15px;
+      border-radius: 4px;
+      background: #f8f9fa;
+      margin-bottom: 15px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    
+    .status-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 10px;
+    }
+    
+    .status-indicator.ok {
+      background-color: #2ecc71;
+    }
+    
+    .status-indicator.error {
+      background-color: #e74c3c;
+    }
+    
+    .status-indicator.warning {
+      background-color: #f39c12;
+    }
+    
+    /* Sélection de points */
+    .selected-points {
+      margin-bottom: 15px;
+    }
+    
+    .point-badge {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      border-left: 3px solid #bbb;
+      font-size: 13px;
+    }
+    
+    .point-badge.hub {
+      border-left-color: #e74c3c;
+    }
+    
+    .point-badge.depot {
+      border-left-color: #3498db;
+    }
+    
+    .point-badge.delivery {
+      border-left-color: #2ecc71;
+    }
+    
+    .point-badge .point-color {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 10px;
+      border: 1px solid #ddd;
+    }
+    
+    .point-badge .hub-color {
+      background-color: #e74c3c;
+    }
+    
+    .point-badge .depot-color {
+      background-color: #3498db;
+    }
+    
+    .point-badge .delivery-color {
+      background-color: #2ecc71;
+    }
+    
+    .point-badge .remove-point {
+      margin-left: auto;
+      color: #7f8c8d;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    
+    /* Route info */
+    .route-info {
+      background: #f8f9fa;
+      border-radius: 4px;
+      padding: 12px;
+      margin-top: 15px;
+      font-size: 13px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    
+    .route-info-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-weight: 500;
+    }
+    
+    .route-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-gap: 10px;
+      margin-top: 10px;
+    }
+    
+    .metric {
+      padding: 5px;
+      text-align: center;
+      background: white;
+      border-radius: 3px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+      font-size: 12px;
+    }
+    
+    .metric-value {
+      font-size: 15px;
+      font-weight: 500;
+      margin-top: 3px;
+      color: #34495e;
+    }
+    
+    .cost-value {
+      font-weight: 500;
+      padding: 2px 6px;
+      border-radius: 3px;
+      display: inline-block;
+    }
+    
+    .cost-optimal {
+      background-color: rgba(46, 204, 113, 0.2);
+      color: #27ae60;
+    }
+    
+    .cost-acceptable {
+      background-color: rgba(241, 196, 15, 0.2);
+      color: #f39c12;
+    }
+    
+    .cost-expensive {
+      background-color: rgba(230, 126, 34, 0.2);
+      color: #d35400;
+    }
+    
+    .cost-very-expensive {
+      background-color: rgba(231, 76, 60, 0.2);
+      color: #c0392b;
+    }
+    
+    .source-info {
+      display: inline-block;
+      font-size: 11px;
+      color: #7f8c8d;
+      margin-left: 5px;
+    }
+    
+    /* Matrice tab */
+    .format-select {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    
+    .matrix-actions {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+    
+    .file-info {
+      margin-top: 15px;
+      font-size: 12px;
+      color: #7f8c8d;
+    }
+    
+    .file-info-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 5px;
+    }
+    
+    .file-info-value {
+      color: #2c3e50;
+      font-weight: 500;
+    }
+    
+    /* Légende */
+    .legend {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
       background: white;
       padding: 10px;
       border-radius: 4px;
-      box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-      max-width: 300px;
-    }
-    .btn {
-      padding: 8px 12px;
-      background: #0078A8;
-      color: white;
-      border: none;
-      border-radius: 3px;
-      cursor: pointer;
-      margin: 5px 0;
-      width: 100%;
-    }
-    .btn:disabled {
-      background: #cccccc;
-      cursor: not-allowed;
-    }
-    .status {
+      box-shadow: 0 1px 5px rgba(0,0,0,0.2);
       font-size: 12px;
-      margin-top: 10px;
-      padding-top: 5px;
-      border-top: 1px solid #eee;
+      z-index: 400;
+      max-width: 200px;
     }
-    .status.ok {
-      color: #2ecc71;
-    }
-    .status.error {
-      color: #e74c3c;
-    }
-    .route-info {
-      margin-top: 10px;
+    
+    .legend h4 {
+      margin: 0 0 8px 0;
       font-size: 13px;
+      font-weight: 500;
     }
-    .help-panel {
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid #eee;
-      font-size: 11px;
-    }
-    pre {
-      background: #f8f8f8;
-      padding: 5px;
-      font-size: 10px;
-      overflow-x: auto;
-    }
-    /* Styles pour la légende */
-    .legend {
-      background: white;
-      padding: 8px;
-      border-radius: 4px;
-      box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-      position: absolute;
-      bottom: 20px;
-      right: 10px;
-      z-index: 1000;
-      font-size: 12px;
-    }
+    
     .legend-item {
-      margin-bottom: 5px;
       display: flex;
       align-items: center;
+      margin-bottom: 5px;
     }
+    
     .legend-color {
       width: 12px;
       height: 12px;
       display: inline-block;
-      margin-right: 5px;
+      margin-right: 8px;
       border-radius: 50%;
-      border: 1px solid #000;
+      border: 1px solid #eee;
     }
-    .legend-hub {
-      background-color: #e74c3c;
+    
+    /* Légende de coût */
+    .cost-legend {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: white;
+      padding: 12px;
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.2);
+      z-index: 400;
+      font-size: 12px;
+      display: none;
+      max-width: 200px;
     }
-    .legend-depot {
-      background-color: #3498db;
+    
+    .cost-legend h4 {
+      margin: 0 0 8px 0;
+      font-size: 13px;
+      font-weight: 500;
     }
-    .legend-delivery {
-      background-color: #2ecc71;
+    
+    .cost-scale {
+      height: 15px;
+      width: 100%;
+      background: linear-gradient(to right, #2ecc71, #f1c40f, #e67e22, #e74c3c);
+      margin-bottom: 5px;
+      border-radius: 2px;
     }
-    .legend-selected {
-      background-color: #ffcc00;
+    
+    .cost-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #7f8c8d;
+    }
+    
+    .matrix-info {
+      margin-top: 8px;
+      font-size: 10px;
+      color: #7f8c8d;
+      border-top: 1px solid #eee;
+      padding-top: 5px;
+    }
+    
+    /* Style des boutons */
+    .btn {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.2s, transform 0.1s;
+    }
+    
+    .btn:active {
+      transform: translateY(1px);
+    }
+    
+    .btn-primary {
+      background: #3498db;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #2980b9;
+    }
+    
+    .btn-secondary {
+      background: #ecf0f1;
+      color: #7f8c8d;
+    }
+    
+    .btn-secondary:hover {
+      background: #dfe6e9;
+      color: #2c3e50;
+    }
+    
+    .btn:disabled {
+      background: #ecf0f1;
+      color: #bdc3c7;
+      cursor: not-allowed;
+    }
+    
+    /* Responsive sidebar */
+    @media screen and (max-width: 768px) {
+      .sidebar {
+        transform: translateX(100%);
+        width: 280px;
+      }
+      
+      .sidebar.open {
+        transform: translateX(0);
+      }
+      
+      .sidebar-toggle {
+        display: block;
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: white;
+        border-radius: 4px;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.2);
+        z-index: 500;
+      }
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div class="control-panel">
-    <h3>Drone Delivery Optimizer</h3>
-    <p>Click on two strategic points to calculate a route.</p>
-    <button id="reset-btn" class="btn">Reset Selection</button>
-    <button id="calculate-btn" class="btn" disabled>Calculate Route</button>
-    <div class="route-info" id="route-info"></div>
-    <div id="status" class="status error">OSRM routing service is not available</div>
-      <div class="help-panel" id="help-panel" style="display: none;">
-      <h4>OSRM Service Unavailable</h4>
-      <p>Unable to connect to OSRM routing service. Please try again later.</p>
-      <button id="refresh-btn" class="btn">Refresh Status</button>
+  
+  <!-- Bouton d'ouverture du sidebar sur mobile -->
+  <button id="sidebar-toggle" class="sidebar-toggle toggle-btn" style="display: none;">☰</button>
+  
+  <!-- Barre latérale principale -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span>Drone Delivery Optimizer</span>
+      <button id="collapse-sidebar" class="toggle-btn">❮</button>
+    </div>
+    
+    <div class="sidebar-content">
+      <!-- Onglets -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="route-tab">Itinéraire</button>
+        <button class="tab-btn" data-tab="matrix-tab">Matrice</button>
+        <button class="tab-btn" data-tab="help-tab">Aide</button>
+      </div>
+      
+      <!-- Onglet itinéraire -->
+      <div id="route-tab" class="tab-content active">
+        <!-- Statut du service -->
+        <div class="status-panel" id="status-panel">
+          <div id="status-indicator" class="status-indicator error"></div>
+          <div id="status-text">Service OSRM non disponible</div>
+        </div>
+        
+        <!-- Points sélectionnés -->
+        <div class="selected-points">
+          <h4>Points sélectionnés</h4>
+          <p id="no-points-message">Cliquez sur deux points stratégiques sur la carte pour calculer un itinéraire</p>
+          <div id="selected-points-list"></div>
+        </div>
+        
+        <!-- Actions d'itinéraire -->
+        <button id="calculate-btn" class="btn btn-primary" disabled style="width: 100%;">Calculer l'itinéraire</button>
+        <button id="reset-btn" class="btn btn-secondary" style="width: 100%; margin-top: 10px;">Réinitialiser</button>
+        
+        <!-- Info itinéraire -->
+        <div class="route-info" id="route-info-panel" style="display: none;">
+          <div class="route-info-header">
+            <div>Résultats d'itinéraire</div>
+            <div id="route-status"></div>
+          </div>
+          <div id="route-from-to"></div>
+          
+          <div class="route-metrics">
+            <div class="metric">
+              <div>Distance</div>
+              <div id="route-distance" class="metric-value">--</div>
+            </div>
+            <div class="metric">
+              <div>Temps estimé</div>
+              <div id="route-duration" class="metric-value">--</div>
+            </div>
+            <div class="metric" style="grid-column: span 2;">
+              <div>Coût</div>
+              <div>
+                <span id="route-cost" class="cost-value cost-optimal">--</span>
+                <span id="route-source" class="source-info"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Onglet matrice -->
+      <div id="matrix-tab" class="tab-content">
+        <h4>Matrice des distances</h4>
+        
+        <select id="format-select" class="format-select">
+          <option value="compact">Format compact (optimisé)</option>
+          <option value="json-gz">JSON compressé (gzip)</option>
+          <option value="json">JSON standard (volumineux)</option>
+        </select>
+        
+        <div class="matrix-actions">
+          <button id="save-matrix-btn" class="btn btn-secondary">Sauvegarder</button>
+          <button id="load-matrix-btn" class="btn btn-secondary">Charger</button>
+          <button id="recalculate-matrix-btn" class="btn btn-secondary">Recalculer</button>
+        </div>
+        
+        <div class="status-panel" id="matrix-status-panel">
+          <div id="matrix-status-indicator" class="status-indicator"></div>
+          <div id="matrix-status-text">Chargement de la matrice...</div>
+        </div>
+        
+        <div class="file-info">
+          <div class="file-info-item">
+            <span>Taille du fichier:</span>
+            <span id="file-size" class="file-info-value">0</span>
+          </div>
+          <div class="file-info-item">
+            <span>Format actuel:</span>
+            <span id="current-format" class="file-info-value">compact</span>
+          </div>
+          <div class="file-info-item">
+            <span>Trajets calculés:</span>
+            <span id="matrix-entries" class="file-info-value">0</span>
+          </div>
+          <div class="file-info-item">
+            <span>Dernière mise à jour:</span>
+            <span id="last-updated" class="file-info-value">Jamais</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Onglet aide -->
+      <div id="help-tab" class="tab-content">
+        <h4>Guide d'utilisation</h4>
+        <p><strong>1.</strong> Assurez-vous que le service OSRM est disponible (indicateur vert)</p>
+        <p><strong>2.</strong> Cliquez sur deux points stratégiques sur la carte</p>
+        <p><strong>3.</strong> Un itinéraire sera automatiquement calculé</p>
+        <p><strong>4.</strong> La couleur de l'itinéraire indique son coût relatif:</p>
+        <div class="legend-item"><span class="legend-color" style="background: #2ecc71;"></span> Optimal</div>
+        <div class="legend-item"><span class="legend-color" style="background: #f1c40f;"></span> Acceptable</div>
+        <div class="legend-item"><span class="legend-color" style="background: #e67e22;"></span> Coûteux</div>
+        <div class="legend-item"><span class="legend-color" style="background: #e74c3c;"></span> Très coûteux</div>
+        
+        <h4 style="margin-top: 20px;">Types de points</h4>
+        <div class="legend-item"><span class="legend-color" style="background: #e74c3c;"></span> Hub</div>
+        <div class="legend-item"><span class="legend-color" style="background: #3498db;"></span> Dépôt</div>
+        <div class="legend-item"><span class="legend-color" style="background: #2ecc71;"></span> Point de livraison</div>
+      </div>
     </div>
   </div>
-
-  <!-- Légende pour les couleurs des points -->
-  <div class="legend">
-    <h4 style="margin-top: 0; margin-bottom: 5px;">Légende</h4>
-    <div class="legend-item"><span class="legend-color legend-hub"></span> Hub</div>
-    <div class="legend-item"><span class="legend-color legend-depot"></span> Dépôt</div>
-    <div class="legend-item"><span class="legend-color legend-delivery"></span> Point de livraison</div>
-    <div class="legend-item"><span class="legend-color legend-selected"></span> Point sélectionné</div>
+  
+  <!-- Légende de coût -->
+  <div class="cost-legend" id="cost-legend">
+    <h4>Coût du trajet</h4>
+    <div class="cost-scale"></div>
+    <div class="cost-labels">
+      <span>Optimal</span>
+      <span>Très élevé</span>
+    </div>
+    <div class="matrix-info" id="matrix-info-legend">
+      Calculé sur <span id="matrix-entries-legend">0</span> trajets.<br>
+      Min: <span id="min-cost">0</span> | Max: <span id="max-cost">0</span>
+    </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -149,40 +606,385 @@
     let pointMarkers = [];
     let routeLayer;
     let strategicPointsLayer;
-
+    
     // DOM elements
-    const resetBtn = document.getElementById('reset-btn');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    const collapseSidebar = document.getElementById('collapse-sidebar');
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+    
+    // Points sélectionnés
+    const noPointsMessage = document.getElementById('no-points-message');
+    const selectedPointsList = document.getElementById('selected-points-list');
+    
+    // Status elements
+    const statusPanel = document.getElementById('status-panel');
+    const statusIndicator = document.getElementById('status-indicator');
+    const statusText = document.getElementById('status-text');
+    
+    // Route elements
     const calculateBtn = document.getElementById('calculate-btn');
-    const statusElement = document.getElementById('status');
-    const routeInfoElement = document.getElementById('route-info');
-    const helpPanel = document.getElementById('help-panel');
-    const refreshBtn = document.getElementById('refresh-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const routeInfoPanel = document.getElementById('route-info-panel');
+    const routeFromTo = document.getElementById('route-from-to');
+    const routeDistance = document.getElementById('route-distance');
+    const routeDuration = document.getElementById('route-duration');
+    const routeCost = document.getElementById('route-cost');
+    const routeSource = document.getElementById('route-source');
+    const costLegend = document.getElementById('cost-legend');
+    
+    // Matrix elements
+    const formatSelect = document.getElementById('format-select');
+    const saveMatrixBtn = document.getElementById('save-matrix-btn');
+    const loadMatrixBtn = document.getElementById('load-matrix-btn');
+    const recalculateMatrixBtn = document.getElementById('recalculate-matrix-btn');
+    const matrixStatusPanel = document.getElementById('matrix-status-panel');
+    const matrixStatusIndicator = document.getElementById('matrix-status-indicator');
+    const matrixStatusText = document.getElementById('matrix-status-text');
+    const fileSizeElement = document.getElementById('file-size');
+    const currentFormatElement = document.getElementById('current-format');
+    const matrixEntriesElement = document.getElementById('matrix-entries');
+    const lastUpdatedElement = document.getElementById('last-updated');
+    
+    // Cost legend elements
+    const matrixEntriesLegend = document.getElementById('matrix-entries-legend');
+    const minCostElement = document.getElementById('min-cost');
+    const maxCostElement = document.getElementById('max-cost');
+    
+    // Matrice stats
+    let matrixStats = {
+      minCost: 0,
+      maxCost: 0,
+      entries: 0,
+      initialized: false,
+      lastUpdated: null,
+      fileSize: 0,
+      format: 'compact'
+    };
 
-    // Check OSRM status
+    // Switch tabs
+    tabButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        tabContents.forEach(content => content.classList.remove('active'));
+        
+        button.classList.add('active');
+        document.getElementById(button.dataset.tab).classList.add('active');
+      });
+    });
+    
+    // Toggle sidebar on mobile
+    sidebarToggle.addEventListener('click', () => {
+      sidebar.classList.add('open');
+    });
+    
+    collapseSidebar.addEventListener('click', () => {
+      if (window.innerWidth <= 768) {
+        sidebar.classList.remove('open');
+      }
+    });
+    
+    // Check if mobile on resize
+    function checkMobile() {
+      if (window.innerWidth <= 768) {
+        sidebarToggle.style.display = 'block';
+        sidebar.classList.remove('open');
+      } else {
+        sidebarToggle.style.display = 'none';
+        sidebar.classList.remove('open');
+      }
+    }
+    
+    window.addEventListener('resize', checkMobile);
+    checkMobile(); // Check on load
+
+    // Fonction pour déterminer la couleur du trajet en fonction du score normalisé
+    function getRouteColor(score) {
+      if (score <= 0.25) {
+        return '#2ecc71'; // Vert - optimal
+      } else if (score <= 0.5) {
+        return '#f1c40f'; // Jaune - acceptable
+      } else if (score <= 0.75) {
+        return '#e67e22'; // Orange - coûteux
+      } else {
+        return '#e74c3c'; // Rouge - très coûteux
+      }
+    }
+    
+    // Fonction pour déterminer la classe CSS du coût
+    function getCostClass(score) {
+      if (score <= 0.25) {
+        return 'cost-optimal';
+      } else if (score <= 0.5) {
+        return 'cost-acceptable';
+      } else if (score <= 0.75) {
+        return 'cost-expensive';
+      } else {
+        return 'cost-very-expensive';
+      }
+    }
+    
+    // Formater une date en format lisible
+    function formatDate(dateStr) {
+      if (!dateStr) return 'Jamais';
+      const date = new Date(dateStr);
+      return date.toLocaleString();
+    }
+
+    // Formater la taille du fichier
+    function formatFileSize(bytes) {
+      if (bytes === 0) return '0 B';
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
+    }
+
+    // Check OSRM status and matrix stats
     async function checkOSRMStatus() {
       try {
-        statusElement.textContent = 'Checking OSRM status...';
-        statusElement.className = 'status';
+        statusText.textContent = 'Vérification du service OSRM...';
         
         const response = await fetch('/api/status');
         const data = await response.json();
         
         if (data.osrm === 'running') {
-          statusElement.textContent = 'OSRM routing service is running';
-          statusElement.className = 'status ok';
-          helpPanel.style.display = 'none';
+          statusIndicator.className = 'status-indicator ok';
+          statusText.textContent = 'Service OSRM disponible';
           calculateBtn.disabled = selectedPoints.length !== 2;
+          
+          // Update matrix stats
+          matrixStats = data.matrix;
+          updateMatrixInfo();
+          
+          // Mettre à jour le sélecteur de format
+          if (matrixStats.format) {
+            formatSelect.value = matrixStats.format;
+            currentFormatElement.textContent = matrixStats.format;
+          }
+          
+          // Mettre à jour la taille du fichier
+          if (matrixStats.fileSize) {
+            fileSizeElement.textContent = formatFileSize(matrixStats.fileSize);
+          }
+          
+          // Mettre à jour la date
+          if (matrixStats.lastUpdated) {
+            lastUpdatedElement.textContent = formatDate(matrixStats.lastUpdated);
+          }
+          
+          // Mettre à jour le nombre d'entrées
+          matrixEntriesElement.textContent = matrixStats.entries;
+          
+          // Mettre à jour l'état de la matrice
+          if (matrixStats.initialized) {
+            matrixStatusIndicator.className = 'status-indicator ok';
+            matrixStatusText.textContent = 'Matrice initialisée';
+          } else {
+            matrixStatusIndicator.className = 'status-indicator warning';
+            matrixStatusText.textContent = 'Matrice non initialisée';
+          }
         } else {
-          statusElement.textContent = 'OSRM routing service is not available';
-          statusElement.className = 'status error';
-          helpPanel.style.display = 'block';
+          statusIndicator.className = 'status-indicator error';
+          statusText.textContent = 'Service OSRM non disponible';
           calculateBtn.disabled = true;
+          
+          matrixStatusIndicator.className = 'status-indicator error';
+          matrixStatusText.textContent = 'Impossible de vérifier la matrice';
         }
       } catch (error) {
-        statusElement.textContent = 'Error checking OSRM status';
-        statusElement.className = 'status error';
-        helpPanel.style.display = 'block';
+        statusIndicator.className = 'status-indicator error';
+        statusText.textContent = 'Erreur de connexion';
         calculateBtn.disabled = true;
+      }
+    }
+    
+    // Mettre à jour l'affichage des points sélectionnés
+    function updateSelectedPointsDisplay() {
+      if (selectedPoints.length === 0) {
+        noPointsMessage.style.display = 'block';
+        selectedPointsList.innerHTML = '';
+        return;
+      }
+      
+      noPointsMessage.style.display = 'none';
+      selectedPointsList.innerHTML = '';
+      
+      selectedPoints.forEach((point, index) => {
+        const id = point.properties.id;
+        const type = id.split('-')[0]; // hub, depot ou delivery
+        
+        const pointElement = document.createElement('div');
+        pointElement.className = `point-badge ${type}`;
+        
+        pointElement.innerHTML = `
+          <span class="point-color ${type}-color"></span>
+          <span>${point.properties.name}</span>
+          <span class="remove-point" data-index="${index}">×</span>
+        `;
+        
+        selectedPointsList.appendChild(pointElement);
+      });
+      
+      // Ajouter les événements de suppression
+      document.querySelectorAll('.remove-point').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const index = parseInt(this.dataset.index);
+          removeSelectedPoint(index);
+        });
+      });
+      
+      // Activer le bouton de calcul si 2 points sont sélectionnés
+      calculateBtn.disabled = selectedPoints.length !== 2 || statusIndicator.className !== 'status-indicator ok';
+    }
+    
+    // Supprimer un point sélectionné
+    function removeSelectedPoint(index) {
+      if (index >= 0 && index < selectedPoints.length) {
+        // Supprimer le marqueur
+        if (index < pointMarkers.length) {
+          map.removeLayer(pointMarkers[index]);
+          pointMarkers.splice(index, 1);
+        }
+        
+        // Supprimer le point
+        selectedPoints.splice(index, 1);
+        
+        // Mettre à jour l'affichage
+        updateSelectedPointsDisplay();
+        
+        // Masquer les informations d'itinéraire
+        routeInfoPanel.style.display = 'none';
+        
+        // Supprimer l'itinéraire
+        if (routeLayer) {
+          map.removeLayer(routeLayer);
+          routeLayer = null;
+        }
+        
+        // Masquer la légende de coût
+        costLegend.style.display = 'none';
+      }
+    }
+    
+    // Update matrix information in the legend
+    function updateMatrixInfo() {
+      if (matrixStats.initialized) {
+        minCostElement.textContent = Math.round(matrixStats.minCost);
+        maxCostElement.textContent = Math.round(matrixStats.maxCost);
+        matrixEntriesLegend.textContent = matrixStats.entries;
+      }
+    }
+    
+    // Save the distance matrix
+    async function saveMatrix() {
+      const format = formatSelect.value;
+      matrixStatusIndicator.className = 'status-indicator';
+      matrixStatusText.textContent = `Sauvegarde en format ${format}...`;
+      
+      try {
+        const response = await fetch(`/api/matrix/save?format=${format}`);
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+          matrixStats = data.stats;
+          matrixStatusIndicator.className = 'status-indicator ok';
+          matrixStatusText.textContent = `Matrice sauvegardée en format ${format}`;
+          
+          // Mettre à jour la taille du fichier
+          if (matrixStats.fileSize) {
+            fileSizeElement.textContent = formatFileSize(matrixStats.fileSize);
+          }
+          
+          // Mettre à jour le format actuel
+          currentFormatElement.textContent = matrixStats.format;
+          
+          // Mettre à jour la date
+          lastUpdatedElement.textContent = formatDate(matrixStats.lastUpdated);
+          
+          // Mettre à jour le nombre d'entrées
+          matrixEntriesElement.textContent = matrixStats.entries;
+        } else {
+          throw new Error(data.message || 'Failed to save matrix');
+        }
+      } catch (error) {
+        matrixStatusIndicator.className = 'status-indicator error';
+        matrixStatusText.textContent = `Erreur: ${error.message}`;
+      }
+    }
+    
+    // Load the distance matrix from file
+    async function loadMatrix() {
+      const format = formatSelect.value;
+      matrixStatusIndicator.className = 'status-indicator';
+      matrixStatusText.textContent = `Chargement depuis format ${format}...`;
+      
+      try {
+        const response = await fetch(`/api/matrix/load?format=${format}`);
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+          matrixStats = data.stats;
+          updateMatrixInfo();
+          
+          matrixStatusIndicator.className = 'status-indicator ok';
+          matrixStatusText.textContent = `Matrice chargée depuis format ${matrixStats.format}`;
+          
+          // Mettre à jour la taille du fichier
+          if (matrixStats.fileSize) {
+            fileSizeElement.textContent = formatFileSize(matrixStats.fileSize);
+          }
+          
+          // Mettre à jour le format actuel
+          currentFormatElement.textContent = matrixStats.format;
+          formatSelect.value = matrixStats.format;
+          
+          // Mettre à jour la date
+          lastUpdatedElement.textContent = formatDate(matrixStats.lastUpdated);
+          
+          // Mettre à jour le nombre d'entrées
+          matrixEntriesElement.textContent = matrixStats.entries;
+        } else {
+          throw new Error(data.message || 'Failed to load matrix');
+        }
+      } catch (error) {
+        matrixStatusIndicator.className = 'status-indicator error';
+        matrixStatusText.textContent = `Erreur: ${error.message}`;
+      }
+    }
+    
+    // Recalculate the entire distance matrix
+    async function recalculateMatrix() {
+      const format = formatSelect.value;
+      if (!confirm(`Recalculer toute la matrice peut prendre du temps. Les données seront sauvegardées au format ${format}. Continuer?`)) {
+        return;
+      }
+      
+      matrixStatusIndicator.className = 'status-indicator';
+      matrixStatusText.textContent = 'Recalcul en cours...';
+      
+      try {
+        const response = await fetch(`/api/matrix/recalculate?format=${format}`);
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+          matrixStats = data.stats;
+          updateMatrixInfo();
+          
+          matrixStatusIndicator.className = 'status-indicator ok';
+          matrixStatusText.textContent = `Matrice recalculée et sauvegardée en format ${format}`;
+          
+          // Mettre à jour le UI
+          fileSizeElement.textContent = formatFileSize(matrixStats.fileSize);
+          currentFormatElement.textContent = matrixStats.format;
+          lastUpdatedElement.textContent = formatDate(matrixStats.lastUpdated);
+          matrixEntriesElement.textContent = matrixStats.entries;
+        } else {
+          throw new Error(data.message || 'Failed to recalculate matrix');
+        }
+      } catch (error) {
+        matrixStatusIndicator.className = 'status-indicator error';
+        matrixStatusText.textContent = `Erreur: ${error.message}`;
       }
     }
 
@@ -209,13 +1011,6 @@
       } catch (error) {
         console.error('Error loading strategic points:', error);
       }
-    }
-
-    // Get color based on point type
-    function getPointColor(id) {
-      if (id.startsWith('hub')) return '#e74c3c';
-      if (id.startsWith('depot')) return '#3498db';
-      return '#2ecc71'; // delivery points
     }
 
     // Handle point click
@@ -250,13 +1045,11 @@
       marker.bindTooltip(`Selected: ${feature.properties.name}`);
       pointMarkers.push(marker);
       
-      // Enable calculate button if 2 points are selected and OSRM is running
-      if (statusElement.className.includes('ok')) {
-        calculateBtn.disabled = selectedPoints.length !== 2;
-      }
+      // Update UI
+      updateSelectedPointsDisplay();
       
       // Auto-calculate route if 2 points selected
-      if (selectedPoints.length === 2 && statusElement.className.includes('ok')) {
+      if (selectedPoints.length === 2 && statusIndicator.className === 'status-indicator ok') {
         calculateRoute();
       }
     }
@@ -275,13 +1068,12 @@
         routeLayer = null;
       }
       
-      // Clear route info
-      routeInfoElement.textContent = '';
+      // Update UI
+      updateSelectedPointsDisplay();
+      routeInfoPanel.style.display = 'none';
       
-      // Disable calculate button
-      if (statusElement.className.includes('ok')) {
-        calculateBtn.disabled = true;
-      }
+      // Hide cost legend
+      costLegend.style.display = 'none';
     }
 
     // Calculate and display route
@@ -289,11 +1081,11 @@
       if (selectedPoints.length !== 2) return;
       
       try {
-        statusElement.textContent = 'Calculating route...';
-        statusElement.className = 'status';
+        statusText.textContent = 'Calcul de l\'itinéraire...';
         
-        const from = `${selectedPoints[0].geometry.coordinates[0]},${selectedPoints[0].geometry.coordinates[1]}`;
-        const to = `${selectedPoints[1].geometry.coordinates[0]},${selectedPoints[1].geometry.coordinates[1]}`;
+        // Envoyer les IDs des points au lieu des coordonnées pour utiliser la matrice
+        const from = selectedPoints[0].properties.id;
+        const to = selectedPoints[1].properties.id;
         
         const response = await fetch(`/api/route?from=${from}&to=${to}`);
         
@@ -309,14 +1101,23 @@
           map.removeLayer(routeLayer);
         }
         
-        // Add new route
+        // Utiliser le score normalisé pour déterminer la couleur
+        const normalizedScore = routeData.normalizedScore;
+        const routeColor = getRouteColor(normalizedScore);
+        const costClass = getCostClass(normalizedScore);
+        
+        // Add new route with color based on normalized score
         routeLayer = L.geoJSON(routeData.geometry, {
           style: {
-            color: '#d35400',
+            color: routeColor,
             weight: 4,
             opacity: 0.9
           }
         }).addTo(map);
+        
+        // Show cost legend
+        costLegend.style.display = 'block';
+        updateMatrixInfo();
         
         // Zoom to route
         map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
@@ -324,23 +1125,40 @@
         // Display route info
         const distance = (routeData.distance / 1000).toFixed(1);
         const duration = Math.round(routeData.duration / 60);
-        const cost = routeData.cost.toFixed(0);
-        routeInfoElement.textContent = `Distance: ${distance} km | Time: ${duration} min | Coût: ${cost}`;
+        const costText = routeData.cost.toFixed(0);
         
-        statusElement.textContent = 'Route calculated successfully';
-        statusElement.className = 'status ok';
+        // Source info
+        const sourceText = routeData.fromMatrix ? 
+          'via matrice' : 'calcul direct';
+        
+        // Update route info panel
+        routeInfoPanel.style.display = 'block';
+        routeFromTo.innerHTML = `<strong>${routeData.fromName || 'Point A'} → ${routeData.toName || 'Point B'}</strong>`;
+        routeDistance.textContent = `${distance} km`;
+        routeDuration.textContent = `${duration} min`;
+        
+        routeCost.textContent = costText;
+        routeCost.className = `cost-value ${costClass}`;
+        routeSource.textContent = `(${sourceText})`;
+        
+        // Update status
+        statusIndicator.className = 'status-indicator ok';
+        statusText.textContent = 'Itinéraire calculé avec succès';
       } catch (error) {
         console.error('Error calculating route:', error);
-        statusElement.textContent = `Error: ${error.message}`;
-        statusElement.className = 'status error';
-        helpPanel.style.display = 'block';
+        statusIndicator.className = 'status-indicator error';
+        statusText.textContent = `Erreur: ${error.message}`;
+        routeInfoPanel.style.display = 'none';
+        costLegend.style.display = 'none';
       }
     }
 
     // Event listeners
     resetBtn.addEventListener('click', resetSelection);
     calculateBtn.addEventListener('click', calculateRoute);
-    refreshBtn.addEventListener('click', checkOSRMStatus);
+    saveMatrixBtn.addEventListener('click', saveMatrix);
+    loadMatrixBtn.addEventListener('click', loadMatrix);
+    recalculateMatrixBtn.addEventListener('click', recalculateMatrix);
 
     // Initialize
     checkOSRMStatus();
