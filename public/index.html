@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drone Delivery Optimizer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: Arial, sans-serif;
+    }
+    #map {
+      width: 100%;
+      height: 100vh;
+    }
+    .control-panel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: white;
+      padding: 10px;
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+      max-width: 300px;
+    }
+    .btn {
+      padding: 8px 12px;
+      background: #0078A8;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      margin: 5px 0;
+      width: 100%;
+    }
+    .btn:disabled {
+      background: #cccccc;
+      cursor: not-allowed;
+    }
+    .status {
+      font-size: 12px;
+      margin-top: 10px;
+      padding-top: 5px;
+      border-top: 1px solid #eee;
+    }
+    .status.ok {
+      color: #2ecc71;
+    }
+    .status.error {
+      color: #e74c3c;
+    }
+    .route-info {
+      margin-top: 10px;
+      font-size: 13px;
+    }
+    .help-panel {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #eee;
+      font-size: 11px;
+    }
+    pre {
+      background: #f8f8f8;
+      padding: 5px;
+      font-size: 10px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="control-panel">
+    <h3>Drone Delivery Optimizer</h3>
+    <p>Click on two strategic points to calculate a route.</p>
+    <button id="reset-btn" class="btn">Reset Selection</button>
+    <button id="calculate-btn" class="btn" disabled>Calculate Route</button>
+    <div class="route-info" id="route-info"></div>
+    <div id="status" class="status error">OSRM routing service is not available</div>
+      <div class="help-panel" id="help-panel" style="display: none;">
+      <h4>OSRM Service Unavailable</h4>
+      <p>Unable to connect to OSRM routing service. Please try again later.</p>
+      <button id="refresh-btn" class="btn">Refresh Status</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Initialize map with minimal style
+    const map = L.map('map').setView([46.603354, 1.888334], 6); // Center of France
+
+    // Use a clean, minimalist base map
+    L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',
+      { attribution: '', maxZoom: 19 }
+    ).addTo(map);
+
+    // Variables to store selected points and layers
+    let selectedPoints = [];
+    let pointMarkers = [];
+    let routeLayer;
+    let strategicPointsLayer;
+
+    // DOM elements
+    const resetBtn = document.getElementById('reset-btn');
+    const calculateBtn = document.getElementById('calculate-btn');
+    const statusElement = document.getElementById('status');
+    const routeInfoElement = document.getElementById('route-info');
+    const helpPanel = document.getElementById('help-panel');
+    const refreshBtn = document.getElementById('refresh-btn');
+
+    // Check OSRM status
+    async function checkOSRMStatus() {
+      try {
+        statusElement.textContent = 'Checking OSRM status...';
+        statusElement.className = 'status';
+        
+        const response = await fetch('/api/status');
+        const data = await response.json();
+        
+        if (data.osrm === 'running') {
+          statusElement.textContent = 'OSRM routing service is running';
+          statusElement.className = 'status ok';
+          helpPanel.style.display = 'none';
+          calculateBtn.disabled = selectedPoints.length !== 2;
+        } else {
+          statusElement.textContent = 'OSRM routing service is not available';
+          statusElement.className = 'status error';
+          helpPanel.style.display = 'block';
+          calculateBtn.disabled = true;
+        }
+      } catch (error) {
+        statusElement.textContent = 'Error checking OSRM status';
+        statusElement.className = 'status error';
+        helpPanel.style.display = 'block';
+        calculateBtn.disabled = true;
+      }
+    }
+
+    // Load strategic points
+    async function loadStrategicPoints() {
+      try {
+        const response = await fetch('/api/strategic-points');
+        const data = await response.json();
+          strategicPointsLayer = L.geoJSON(data, {
+          pointToLayer: ({properties}, latlng) => 
+            L.circleMarker(latlng, { 
+              radius: 6, 
+              color: '#000',
+              fillColor: properties.id.startsWith('hub') ? '#e74c3c'
+                       : properties.id.startsWith('depot') ? '#3498db'
+                       : '#2ecc71',
+              fillOpacity: 0.9 
+            }),
+          onEachFeature: (f,l) => {
+            l.bindTooltip(f.properties.name);
+            l.on('click', () => handlePointClick(f));
+          }
+        }).addTo(map);
+      } catch (error) {
+        console.error('Error loading strategic points:', error);
+      }
+    }
+
+    // Get color based on point type
+    function getPointColor(id) {
+      if (id.startsWith('hub')) return '#e74c3c';
+      if (id.startsWith('depot')) return '#3498db';
+      return '#2ecc71'; // delivery points
+    }
+
+    // Handle point click
+    function handlePointClick(feature) {
+      // Only allow selecting 2 points
+      if (selectedPoints.length >= 2) return;
+      
+      // Check if point already selected
+      const existingIndex = selectedPoints.findIndex(p => 
+        p.geometry.coordinates[0] === feature.geometry.coordinates[0] && 
+        p.geometry.coordinates[1] === feature.geometry.coordinates[1]
+      );
+      
+      if (existingIndex > -1) return;
+      
+      // Add point to selection
+      selectedPoints.push(feature);
+      
+      // Add marker
+      const marker = L.circleMarker(
+        [feature.geometry.coordinates[1], feature.geometry.coordinates[0]],
+        {
+          radius: 8,
+          fillColor: '#ffcc00',
+          color: '#000',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.8
+        }
+      ).addTo(map);
+      
+      marker.bindTooltip(`Selected: ${feature.properties.name}`);
+      pointMarkers.push(marker);
+      
+      // Enable calculate button if 2 points are selected and OSRM is running
+      if (statusElement.className.includes('ok')) {
+        calculateBtn.disabled = selectedPoints.length !== 2;
+      }
+      
+      // Auto-calculate route if 2 points selected
+      if (selectedPoints.length === 2 && statusElement.className.includes('ok')) {
+        calculateRoute();
+      }
+    }
+
+    // Reset selection
+    function resetSelection() {
+      selectedPoints = [];
+      
+      // Remove markers
+      pointMarkers.forEach(marker => map.removeLayer(marker));
+      pointMarkers = [];
+      
+      // Remove route
+      if (routeLayer) {
+        map.removeLayer(routeLayer);
+        routeLayer = null;
+      }
+      
+      // Clear route info
+      routeInfoElement.textContent = '';
+      
+      // Disable calculate button
+      if (statusElement.className.includes('ok')) {
+        calculateBtn.disabled = true;
+      }
+    }
+
+    // Calculate and display route
+    async function calculateRoute() {
+      if (selectedPoints.length !== 2) return;
+      
+      try {
+        statusElement.textContent = 'Calculating route...';
+        statusElement.className = 'status';
+        
+        const from = `${selectedPoints[0].geometry.coordinates[0]},${selectedPoints[0].geometry.coordinates[1]}`;
+        const to = `${selectedPoints[1].geometry.coordinates[0]},${selectedPoints[1].geometry.coordinates[1]}`;
+        
+        const response = await fetch(`/api/route?from=${from}&to=${to}`);
+        
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Route calculation failed');
+        }
+        
+        const routeData = await response.json();
+        
+        // Remove existing route
+        if (routeLayer) {
+          map.removeLayer(routeLayer);
+        }
+        
+        // Add new route
+        routeLayer = L.geoJSON(routeData.geometry, {
+          style: {
+            color: '#d35400',
+            weight: 4,
+            opacity: 0.9
+          }
+        }).addTo(map);
+        
+        // Zoom to route
+        map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+        
+        // Display route info
+        const distance = (routeData.distance / 1000).toFixed(1);
+        const duration = Math.round(routeData.duration / 60);
+        const cost = routeData.cost.toFixed(0);
+        routeInfoElement.textContent = `Distance: ${distance} km | Time: ${duration} min | Coût: ${cost}`;
+        
+        statusElement.textContent = 'Route calculated successfully';
+        statusElement.className = 'status ok';
+      } catch (error) {
+        console.error('Error calculating route:', error);
+        statusElement.textContent = `Error: ${error.message}`;
+        statusElement.className = 'status error';
+        helpPanel.style.display = 'block';
+      }
+    }
+
+    // Event listeners
+    resetBtn.addEventListener('click', resetSelection);
+    calculateBtn.addEventListener('click', calculateRoute);
+    refreshBtn.addEventListener('click', checkOSRMStatus);
+
+    // Initialize
+    checkOSRMStatus();
+    loadStrategicPoints();
+  </script>
+</body>
+</html>
