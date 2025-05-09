@@ -7,6 +7,27 @@ module.exports.strategicPoints = {
       geometry: { type: "Point", coordinates: [4.8357, 45.7640] } },
     { type: "Feature", properties: { id: "delivery-1", name: "Marseille Delivery" },
       geometry: { type: "Point", coordinates: [5.3698, 43.2965] } },
-
+    { type: "Feature", properties: { id: "hub-2", name: "Lille Hub" },
+      geometry: { type: "Point", coordinates: [3.0573, 50.6292] } },
+    { type: "Feature", properties: { id: "hub-3", name: "Bordeaux Hub" },
+      geometry: { type: "Point", coordinates: [-0.5795, 44.8378] } },
+    { type: "Feature", properties: { id: "depot-2", name: "Toulouse Depot" },
+      geometry: { type: "Point", coordinates: [1.4442, 43.6047] } },
+    { type: "Feature", properties: { id: "depot-3", name: "Strasbourg Depot" },
+      geometry: { type: "Point", coordinates: [7.7521, 48.5734] } },
+    { type: "Feature", properties: { id: "depot-4", name: "Nantes Depot" },
+      geometry: { type: "Point", coordinates: [-1.5534, 47.2184] } },
+    { type: "Feature", properties: { id: "delivery-2", name: "Nice Delivery" },
+      geometry: { type: "Point", coordinates: [7.2620, 43.7102] } },
+    { type: "Feature", properties: { id: "delivery-3", name: "Rennes Delivery" },
+      geometry: { type: "Point", coordinates: [-1.6777, 48.1173] } },
+    { type: "Feature", properties: { id: "delivery-4", name: "Montpellier Delivery" },
+      geometry: { type: "Point", coordinates: [3.8767, 43.6108] } },
+    { type: "Feature", properties: { id: "delivery-5", name: "Dijon Delivery" },
+      geometry: { type: "Point", coordinates: [5.0415, 47.3220] } },
+    { type: "Feature", properties: { id: "hub-4", name: "Tours Hub" },
+      geometry: { type: "Point", coordinates: [0.6848, 47.3941] } },
+    { type: "Feature", properties: { id: "depot-5", name: "Clermont-Ferrand Depot" },
+      geometry: { type: "Point", coordinates: [3.0819, 45.7772] } }
   ]
 };
