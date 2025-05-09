@@ -28,6 +28,27 @@ module.exports.strategicPoints = {
     { type: "Feature", properties: { id: "hub-4", name: "Tours Hub" },
       geometry: { type: "Point", coordinates: [0.6848, 47.3941] } },
     { type: "Feature", properties: { id: "depot-5", name: "Clermont-Ferrand Depot" },
-      geometry: { type: "Point", coordinates: [3.0819, 45.7772] } }
+      geometry: { type: "Point", coordinates: [3.0819, 45.7772] } },
+    // Nouveaux points ajoutés
+    { type: "Feature", properties: { id: "delivery-6", name: "Annecy Delivery" },
+      geometry: { type: "Point", coordinates: [6.1294, 45.8992] } },
+    { type: "Feature", properties: { id: "hub-5", name: "Grenoble Hub" },
+      geometry: { type: "Point", coordinates: [5.7245, 45.1885] } },
+    { type: "Feature", properties: { id: "depot-6", name: "Reims Depot" },
+      geometry: { type: "Point", coordinates: [4.0318, 49.2583] } },
+    { type: "Feature", properties: { id: "delivery-7", name: "Brest Delivery" },
+      geometry: { type: "Point", coordinates: [-4.4860, 48.3904] } },
+    { type: "Feature", properties: { id: "hub-6", name: "Limoges Hub" },
+      geometry: { type: "Point", coordinates: [1.2611, 45.8336] } },
+    { type: "Feature", properties: { id: "delivery-8", name: "Toulon Delivery" },
+      geometry: { type: "Point", coordinates: [5.9333, 43.1167] } },
+    { type: "Feature", properties: { id: "depot-7", name: "Orléans Depot" },
+      geometry: { type: "Point", coordinates: [1.9039, 47.9029] } },
+    { type: "Feature", properties: { id: "delivery-9", name: "Metz Delivery" },
+      geometry: { type: "Point", coordinates: [6.1757, 49.1193] } },
+    { type: "Feature", properties: { id: "hub-7", name: "Rouen Hub" },
+      geometry: { type: "Point", coordinates: [1.0993, 49.4431] } },
+    { type: "Feature", properties: { id: "delivery-10", name: "Perpignan Delivery" },
+      geometry: { type: "Point", coordinates: [2.8954, 42.6887] } }
   ]
 };

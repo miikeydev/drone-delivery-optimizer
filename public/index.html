@@ -69,6 +69,43 @@
       font-size: 10px;
       overflow-x: auto;
     }
+    /* Styles pour la légende */
+    .legend {
+      background: white;
+      padding: 8px;
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+      position: absolute;
+      bottom: 20px;
+      right: 10px;
+      z-index: 1000;
+      font-size: 12px;
+    }
+    .legend-item {
+      margin-bottom: 5px;
+      display: flex;
+      align-items: center;
+    }
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      display: inline-block;
+      margin-right: 5px;
+      border-radius: 50%;
+      border: 1px solid #000;
+    }
+    .legend-hub {
+      background-color: #e74c3c;
+    }
+    .legend-depot {
+      background-color: #3498db;
+    }
+    .legend-delivery {
+      background-color: #2ecc71;
+    }
+    .legend-selected {
+      background-color: #ffcc00;
+    }
   </style>
 </head>
 <body>
@@ -85,6 +122,15 @@
       <p>Unable to connect to OSRM routing service. Please try again later.</p>
       <button id="refresh-btn" class="btn">Refresh Status</button>
     </div>
+  </div>
+
+  <!-- Légende pour les couleurs des points -->
+  <div class="legend">
+    <h4 style="margin-top: 0; margin-bottom: 5px;">Légende</h4>
+    <div class="legend-item"><span class="legend-color legend-hub"></span> Hub</div>
+    <div class="legend-item"><span class="legend-color legend-depot"></span> Dépôt</div>
+    <div class="legend-item"><span class="legend-color legend-delivery"></span> Point de livraison</div>
+    <div class="legend-item"><span class="legend-color legend-selected"></span> Point sélectionné</div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
