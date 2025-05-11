@@ -5,158 +5,378 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Drone Delivery Optimizer</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <style>
-    body, html {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      font-family: Arial, sans-serif;
-    }
-    #map {
-      width: 100%;
-      height: 100vh;
-    }
-    .control-panel {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      background: rgba(255,255,255,0.9);
-      padding: 15px;
-      border-radius: 5px;
-      z-index: 1000;
-      box-shadow: 0 0 10px rgba(0,0,0,0.2);
-    }
-    .control-section {
-      margin-bottom: 15px;
-    }
-    .control-section h3 {
-      margin: 0 0 10px 0;
-      font-size: 16px;
-    }
-    .number-input {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    .number-input input[type="number"] {
-      width: 50px;
-      padding: 3px;
-    }
-    button {
-      background: #2980b9;
-      color: white;
-      border: none;
-      padding: 8px 15px;
-      border-radius: 4px;
-      cursor: pointer;
-      width: 100%;
-      margin-top: 5px;
-    }
-    button:hover {
-      background: #3498db;
-    }
-    .checkbox-row {
-      display: flex;
-      align-items: center;
-      margin-bottom: 5px;
-    }
-    .checkbox-row input {
-      margin-right: 5px;
-    }
-    .legend {
-      background: white;
-      padding: 10px;
-      border-radius: 5px;
-      box-shadow: 0 0 5px rgba(0,0,0,0.2);
-    }
-    .legend-title {
-      margin: 0 0 8px 0;
-      font-size: 14px;
-      font-weight: bold;
-    }
-    .legend-item {
-      display: flex;
-      align-items: center;
-      margin-bottom: 5px;
-    }
-    .legend-color {
-      width: 16px;
-      height: 16px;
-      margin-right: 8px;
-      border-radius: 50%;
-    }
-    .title-panel {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(255,255,255,0.9);
-      padding: 8px 15px;
-      border-radius: 5px;
-      z-index: 1000;
-      font-weight: bold;
-      text-align: center;
-    }
-  </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-polylinedecorator/dist/leaflet.polylineDecorator.css"/>
+  <link rel="stylesheet" href="/css/style.css"/>
 </head>
 <body>
-  <div id="map"></div>
-  <div class="title-panel">Drone Delivery Network Optimization</div>
-  
-  <div class="control-panel">
-    <div class="control-section">
-      <h3>Point Generation</h3>
-      <div class="number-input">
-        <label for="count-hubs">Hubs:</label>
-        <input type="number" id="count-hubs" value="5" min="1" max="50"/>
-      </div>
-      <div class="number-input">
-        <label for="count-charging">Charging Stations:</label>
-        <input type="number" id="count-charging" value="15" min="1" max="100"/>
-      </div>
-      <div class="number-input">
-        <label for="count-delivery">Delivery Points:</label>
-        <input type="number" id="count-delivery" value="30" min="1" max="200"/>
-      </div>
-      <div class="number-input">
-        <label for="count-pickup">Pickup Points:</label>
-        <input type="number" id="count-pickup" value="20" min="1" max="200"/>
-      </div>
-      <button id="generate">Generate Points</button>
+  <div id="app-container">
+    <div id="map-container">
+      <div id="map"></div>
     </div>
+    
+    <div id="sidebar">
+      <div class="sidebar-header">
+        Drone Delivery Optimizer
+      </div>
+      
+      <div class="sidebar-content">
+        <!-- Wind Direction at the top -->
+        <div class="control-section">
+          <h3>Wind Direction</h3>
+          <div class="wind-control">
+            <div class="wind-compass-container">
+              <div class="wind-compass">
+                <div class="compass-marker compass-n">N</div>
+                <div class="compass-marker compass-e">E</div>
+                <div class="compass-marker compass-s">S</div>
+                <div class="compass-marker compass-w">W</div>
+                <div id="wind-arrow"></div>
+              </div>
+              <div class="wind-angle">
+                <input type="number" id="wind-direction-input" min="0" max="359" value="0">
+                <span>degrees</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-    <div class="control-section">
-      <h3>Layer Visibility</h3>
-      <div class="checkbox-row">
-        <input type="checkbox" id="toggle-hubs" checked/>
-        <label for="toggle-hubs">Hubs</label>
+        <div class="divider"></div>
+        
+        <!-- Algorithm Selection with toggle style -->
+        <div class="control-section">
+          <h3>Algorithme</h3>
+          <div class="algorithm-toggle" data-selected="ga">
+            <div class="algorithm-selector"></div>
+            <div class="algorithm-option active" data-value="ga">Genetic Algorithm</div>
+            <div class="algorithm-option" data-value="gnn">Graph Neural Network</div>
+          </div>
+          <button id="run-algo">Run Algorithm</button>
+        </div>
+
+        <div class="divider"></div>
+        
+        <!-- Drone Settings -->
+        <div class="control-section">
+          <h3>Drone Settings</h3>
+          
+          <!-- Battery capacity with modern slider -->
+          <div class="battery-label">
+            <span>Batterie</span>
+            <span id="drone-battery-value">30</span> unités
+          </div>
+          
+          <div class="modern-slider-container">
+            <div class="modern-slider">
+              <div class="modern-slider-fill" id="battery-slider-fill" style="width: 50%;"></div>
+              <div class="modern-slider-handle" id="battery-slider-handle" style="left: 50%;"></div>
+              <div class="modern-slider-label" id="battery-slider-label" style="left: 50%;">30</div>
+            </div>
+            <div class="modern-slider-ticks">
+              <div class="modern-slider-tick">10</div>
+              <div class="modern-slider-tick">20</div>
+              <div class="modern-slider-tick">30</div>
+              <div class="modern-slider-tick">40</div>
+              <div class="modern-slider-tick">50</div>
+            </div>
+          </div>
+          
+          <!-- Package capacity with clickable icons -->
+          <div class="package-label">
+            <span>Nombre max colis</span>
+            <span id="drone-payload-value">3</span>
+          </div>
+          
+          <div class="packages-container">
+            <div class="package-icon" data-index="1">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15Z"/>
+              </svg>
+            </div>
+            <div class="package-icon" data-index="2">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15Z"/>
+              </svg>
+            </div>
+            <div class="package-icon" data-index="3">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15Z"/>
+              </svg>
+            </div>
+            <div class="package-icon" data-index="4">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15Z"/>
+              </svg>
+            </div>
+            <div class="package-icon" data-index="5">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15Z"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+                
+        <div class="divider"></div>
+
+        <!-- Layer Visibility -->
+        <div class="control-section">
+          <h3>Visibility</h3>
+          <div class="checkbox-group">
+            <div class="checkbox-item">
+              <input type="checkbox" id="toggle-hubs" checked/>
+              <label for="toggle-hubs">Hubs</label>
+            </div>
+            
+            <div class="checkbox-item">
+              <input type="checkbox" id="toggle-charging" checked/>
+              <label for="toggle-charging">Charging</label>
+            </div>
+            
+            <div class="checkbox-item">
+              <input type="checkbox" id="toggle-delivery" checked/>
+              <label for="toggle-delivery">Delivery</label>
+            </div>
+            
+            <div class="checkbox-item">
+              <input type="checkbox" id="toggle-pickup" checked/>
+              <label for="toggle-pickup">Pickup</label>
+            </div>
+            
+            <div class="checkbox-item">
+              <input type="checkbox" id="toggle-edges" checked/>
+              <label for="toggle-edges">Edges</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Legend -->
+        <div class="control-section">
+          <h3>Legend</h3>
+          <div class="mini-legend">
+            <div class="legend-item-small">
+              <span class="legend-color-small" style="background: #e74c3c;"></span>
+              <span>Hubs</span>
+            </div>
+            
+            <div class="legend-item-small">
+              <span class="legend-color-small" style="background: #2980b9;"></span>
+              <span>Charging</span>
+            </div>
+            
+            <div class="legend-item-small">
+              <span class="legend-color-small" style="background: #27ae60;"></span>
+              <span>Delivery</span>
+            </div>
+            
+            <div class="legend-item-small">
+              <span class="legend-color-small" style="background: #f39c12;"></span>
+              <span>Pickup</span>
+            </div>
+          </div>
+          
+          <div class="edge-cost-legend">
+            <div class="edge-gradient"></div>
+            <div class="edge-labels">
+              <span>Low Cost</span>
+              <span>High Cost</span>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="checkbox-row">
-        <input type="checkbox" id="toggle-charging" checked/>
-        <label for="toggle-charging">Charging Stations</label>
-      </div>
-      <div class="checkbox-row">
-        <input type="checkbox" id="toggle-delivery" checked/>
-        <label for="toggle-delivery">Delivery Points</label>
-      </div>
-      <div class="checkbox-row">
-        <input type="checkbox" id="toggle-pickup" checked/>
-        <label for="toggle-pickup">Pickup Points</label>
+      
+      <div class="sidebar-footer">
+        Click on any node to highlight connections
       </div>
     </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Turf pour le test point-in-polygon -->
+  <script src="https://unpkg.com/leaflet-polylinedecorator/dist/leaflet.polylineDecorator.js"></script>
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
-  <script src="/js/map-generator.js" onerror="alert('Impossible de charger le fichier map-generator.js. Vérifiez le chemin et les droits d\'accès.')"></script>
+  
+  <!-- Modular script imports -->
+  <script src="/js/utils.js"></script>
+  <script src="/js/poisson.js"></script>
+  <script src="/js/graph.js"></script>
+  <script src="/js/drawer.js"></script>
+  <script src="/js/app.js"></script>
+  
   <script>
     window.addEventListener('DOMContentLoaded', function() {
       if (!L || typeof L.map !== 'function') {
         alert('Problème avec la bibliothèque Leaflet. Vérifiez votre connexion Internet.');
       }
+      
+      // Initialize wind direction control
+      const windDirectionInput = document.getElementById('wind-direction-input');
+      const windArrow = document.getElementById('wind-arrow');
+      
+      // Update arrow when input changes
+      windDirectionInput.addEventListener('change', function() {
+        let degrees = parseInt(this.value) || 0;
+        // Ensure value is between 0-359
+        degrees = ((degrees % 360) + 360) % 360;
+        this.value = degrees;
+        
+        // Convert degrees to radians for internal use
+        windAngle = (degrees * Math.PI / 180);
+        
+        // Update UI
+        windArrow.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
+      });
+      
+      // Sync initial values
+      windDirectionInput.value = Math.round((windAngle * 180 / Math.PI) % 360);
+      windArrow.style.transform = `translate(-50%, -50%) rotate(${windDirectionInput.value}deg)`;
+      
+      // Setup algorithm toggle
+      const toggle = document.querySelector('.algorithm-toggle');
+      const options = document.querySelectorAll('.algorithm-option');
+      
+      options.forEach(option => {
+        option.addEventListener('click', function() {
+          const value = this.getAttribute('data-value');
+          toggle.setAttribute('data-selected', value);
+          
+          options.forEach(opt => {
+            opt.classList.toggle('active', opt === this);
+          });
+        });
+      });
+      
+      // Setup battery slider
+      setupBatterySlider();
+      
+      // Setup package icons
+      setupPackageIcons();
     });
+    
+    function setupBatterySlider() {
+      const min = 10;
+      const max = 50;
+      const slider = document.querySelector('.modern-slider');
+      const handle = document.getElementById('battery-slider-handle');
+      const fill = document.getElementById('battery-slider-fill');
+      const label = document.getElementById('battery-slider-label');
+      const valueDisplay = document.getElementById('drone-battery-value');
+      let isDragging = false;
+      
+      function updateSlider(clientX) {
+        const rect = slider.getBoundingClientRect();
+        let x = clientX - rect.left;
+        
+        // Constrain x to the slider width
+        x = Math.max(0, Math.min(x, rect.width));
+        
+        // Convert to percentage
+        const percentage = x / rect.width;
+        
+        // Convert to value between min and max
+        const value = Math.round(min + percentage * (max - min));
+        
+        // Update UI
+        const leftPos = percentage * 100;
+        handle.style.left = `${leftPos}%`;
+        fill.style.width = `${leftPos}%`;
+        label.style.left = `${leftPos}%`;
+        label.textContent = value;
+        valueDisplay.textContent = value;
+        
+        // Store the value
+        window.batteryCapacity = value;
+        
+        // Ensure the label stays within view
+        const labelRect = label.getBoundingClientRect();
+        if (labelRect.right > rect.right) {
+          label.style.transform = 'translate(-100%, -100%)';
+        } else if (labelRect.left < rect.left) {
+          label.style.transform = 'translate(0, -100%)';
+        } else {
+          label.style.transform = 'translate(-50%, -100%)';
+        }
+      }
+      
+      // Set initial value (30)
+      const initialValue = 30;
+      const initialPercentage = (initialValue - min) / (max - min);
+      handle.style.left = `${initialPercentage * 100}%`;
+      fill.style.width = `${initialPercentage * 100}%`;
+      label.style.left = `${initialPercentage * 100}%`;
+      label.textContent = initialValue;
+      window.batteryCapacity = initialValue;
+      
+      // Mouse events
+      handle.addEventListener('mousedown', function(e) {
+        isDragging = true;
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onRelease);
+        e.preventDefault(); // Prevent text selection
+      });
+      
+      slider.addEventListener('click', function(e) {
+        if (e.target !== handle) {
+          updateSlider(e.clientX);
+        }
+      });
+      
+      function onMove(e) {
+        if (isDragging) {
+          updateSlider(e.clientX);
+        }
+      }
+      
+      function onRelease() {
+        isDragging = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onRelease);
+      }
+      
+      // Touch events
+      handle.addEventListener('touchstart', function(e) {
+        isDragging = true;
+        document.addEventListener('touchmove', onTouchMove);
+        document.addEventListener('touchend', onTouchEnd);
+        e.preventDefault();
+      });
+      
+      function onTouchMove(e) {
+        if (isDragging && e.touches[0]) {
+          updateSlider(e.touches[0].clientX);
+        }
+      }
+      
+      function onTouchEnd() {
+        isDragging = false;
+        document.removeEventListener('touchmove', onTouchMove);
+        document.removeEventListener('touchend', onTouchEnd);
+      }
+    }
+    
+    function setupPackageIcons() {
+      const packageIcons = document.querySelectorAll('.package-icon');
+      const valueDisplay = document.getElementById('drone-payload-value');
+      
+      // Initialize with 3 packages active
+      updatePackageIcons(3);
+      
+      packageIcons.forEach(icon => {
+        icon.addEventListener('click', function() {
+          const index = parseInt(this.getAttribute('data-index'));
+          updatePackageIcons(index);
+        });
+      });
+      
+      function updatePackageIcons(maxActive) {
+        packageIcons.forEach(icon => {
+          const index = parseInt(icon.getAttribute('data-index'));
+          icon.classList.toggle('active', index <= maxActive);
+        });
+        
+        valueDisplay.textContent = maxActive;
+        window.maxPayload = maxActive;
+      }
+    }
   </script>
 </body>
 </html>

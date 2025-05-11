@@ -3,6 +3,9 @@ const express = require('express');
 const path = require('path');
 const app = express();
 
+// Accept JSON request bodies
+app.use(express.json());
+
 // Servir les fichiers statiques depuis le dossier public
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -21,6 +24,28 @@ app.get('/api/strategic-points', (req, res) => {
 
 app.get('/api/osrm-status', (req, res) => {
   res.json({ status: 'online' });
+});
+
+// New endpoint for algorithm execution - placeholder for future implementation
+app.post('/api/run-algorithm', (req, res) => {
+  const { algorithm, batteryCapacity, maxPayload, startNode, endNode } = req.body;
+  
+  console.log(`Executing ${algorithm} algorithm with battery=${batteryCapacity}, payload=${maxPayload}`);
+  
+  // This is a placeholder - the real implementation would come later
+  // Simulate processing delay
+  setTimeout(() => {
+    res.json({ 
+      status: 'success', 
+      message: `${algorithm} algorithm executed successfully`,
+      route: [],  // This would contain the actual route in a real implementation
+      stats: {
+        distance: 150.5,
+        time: 45.2,
+        batteryUsed: batteryCapacity * 0.8
+      }
+    });
+  }, 1500);
 });
 
 const PORT = process.env.PORT || 8000;
