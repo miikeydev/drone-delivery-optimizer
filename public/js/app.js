@@ -436,45 +436,62 @@ async function generateNetwork() {
   }
 }
 
-/**
- * Run the selected algorithm
- */
+// --- Algorithm toggle logic ---
+const algoToggle = document.querySelector('.algorithm-toggle');
+const algoOptions = document.querySelectorAll('.algorithm-option');
+if (algoToggle && algoOptions.length) {
+  algoOptions.forEach(opt => {
+    opt.addEventListener('click', () => {
+      algoOptions.forEach(o => o.classList.remove('active'));
+      opt.classList.add('active');
+      algoToggle.setAttribute('data-selected', opt.getAttribute('data-value'));
+    });
+  });
+}
+
+// --- Run button logic ---
 function runAlgorithm() {
   const algorithm = document.querySelector('.algorithm-toggle').getAttribute('data-selected');
-  
-  // Get drone settings from global variables set by UI components
   const batteryCapacity = window.batteryCapacity;
   const maxPayload = window.maxPayload;
-  
-  console.log(`Running ${algorithm.toUpperCase()} algorithm with:`, {
-    batteryCapacity,
-    maxPayload
+  // Template: to be implemented
+  alert(`Run: ${algorithm === 'ga' ? 'Genetic Algorithm' : 'GNN + PPO'}\nBattery: ${batteryCapacity}\nMax payload: ${maxPayload}`);
+}
+document.getElementById('run-algo').addEventListener('click', runAlgorithm);
+
+// --- Battery slider logic ---
+const batterySlider = document.getElementById('battery-slider');
+const batteryValue = document.getElementById('drone-battery-value');
+const batteryFill = document.getElementById('battery-slider-fill');
+if (batterySlider && batteryValue && batteryFill) {
+  function updateBatteryUI(val) {
+    batteryValue.textContent = val;
+    window.batteryCapacity = parseInt(val, 10);
+    const percent = (val - 10) / 90;
+    batteryFill.style.width = (percent * 100) + '%';
+    // Already styled in CSS for pro look
+  }
+  batterySlider.addEventListener('input', e => updateBatteryUI(e.target.value));
+  updateBatteryUI(batterySlider.value);
+}
+
+// --- Package icons gradient fill (light to dark) ---
+const packagesContainer = document.getElementById('packages-container');
+const payloadValue = document.getElementById('drone-payload-value');
+if (packagesContainer && payloadValue) {
+  let maxPayload = 3;
+  function updatePackagesUI(n) {
+    Array.from(packagesContainer.children).forEach((el, idx) => {
+      if (idx < n) el.classList.add('active');
+      else el.classList.remove('active');
+    });
+    payloadValue.textContent = n;
+    window.maxPayload = n;
+  }
+  Array.from(packagesContainer.children).forEach((el, idx) => {
+    el.addEventListener('click', () => updatePackagesUI(idx + 1));
   });
-  
-  // Make an AJAX call to the backend to run the algorithm
-  fetch('/api/run-algorithm', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      algorithm,
-      batteryCapacity,
-      maxPayload,
-      nodes: allNodes,
-      edges: allEdges,
-      windAngle
-    })
-  })
-  .then(response => response.json())
-  .then(data => {
-    console.log('Success:', data);
-    alert(`Algorithm completed! Distance: ${data.stats.distance} km, Battery used: ${data.stats.batteryUsed} units`);
-  })
-  .catch(error => {
-    console.error('Error:', error);
-    alert('Failed to run algorithm. Check the console for details.');
-  });
+  updatePackagesUI(maxPayload);
 }
 
 // --- Wind compass interactive control ---
@@ -534,15 +551,7 @@ if (windCompass) {
   window.addEventListener('touchend', () => { draggingWind = false; });
 }
 
-// Event listeners for UI controls
-document.getElementById('toggle-hubs').addEventListener('change', function(e) {
-  if (e.target.checked) {
-    map.addLayer(hubsLayer);
-  } else {
-    map.removeLayer(hubsLayer);
-  }
-});
-
+// --- Visibility toggles (only charging and edges) ---
 document.getElementById('toggle-charging').addEventListener('change', function(e) {
   if (e.target.checked) {
     map.addLayer(chargingLayer);
@@ -550,23 +559,6 @@ document.getElementById('toggle-charging').addEventListener('change', function(e
     map.removeLayer(chargingLayer);
   }
 });
-
-document.getElementById('toggle-delivery').addEventListener('change', function(e) {
-  if (e.target.checked) {
-    map.addLayer(deliveryLayer);
-  } else {
-    map.removeLayer(deliveryLayer);
-  }
-});
-
-document.getElementById('toggle-pickup').addEventListener('change', function(e) {
-  if (e.target.checked) {
-    map.addLayer(pickupLayer);
-  } else {
-    map.removeLayer(pickupLayer);
-  }
-});
-
 document.getElementById('toggle-edges').addEventListener('change', function(e) {
   if (e.target.checked) {
     map.addLayer(edgesLayer);
@@ -574,9 +566,6 @@ document.getElementById('toggle-edges').addEventListener('change', function(e) {
     map.removeLayer(edgesLayer);
   }
 });
-
-// Set up the run algorithm button
-document.getElementById('run-algo').addEventListener('click', runAlgorithm);
 
 // Map click handler
 map.on('click', function(e) {
