@@ -216,7 +216,7 @@ body, html {
 /* Algorithm toggle */
 .algorithm-toggle {
   background: #f7f7f7;
-  border-radius: 16px;
+  border-radius: 8px; /* réduit le radius */
   padding: 2px;
   position: relative;
   width: 170px;
@@ -233,9 +233,9 @@ body, html {
 .algorithm-option {
   flex: 1;
   text-align: center;
-  font-size: 15px;
+  font-size: 13px;
   padding: 5px 0;
-  border-radius: 16px;
+  border-radius: 8px; /* réduit le radius */
   cursor: pointer;
   position: relative;
   z-index: 2;
@@ -250,6 +250,7 @@ body, html {
   color: #fff;
   box-shadow: 0 2px 8px rgba(56, 176, 0, 0.13);
   font-weight: bold;
+  border-radius: 8px; /* réduit le radius */
 }
 
 .algorithm-selector {
@@ -366,6 +367,58 @@ button:disabled {
 .run-btn svg {
   display: block;
   margin: auto;
+}
+
+/* Nouveau style pour le bouton play plus grand et effet "lift" */
+.run-btn-icon {
+  background: none !important;
+  border: none !important;
+  border-radius: 50% !important;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  max-width: 48px;
+  max-height: 48px;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none !important;
+  cursor: pointer;
+  transition: transform 0.18s cubic-bezier(.4,2,.6,1), box-shadow 0.18s, background 0.18s;
+  will-change: transform, box-shadow, background;
+}
+
+.run-btn-icon svg {
+  display: block;
+  margin: auto;
+  width: 32px !important;
+  height: 32px !important;
+  filter: none;
+  transition: filter 0.15s, transform 0.15s;
+}
+
+.run-btn-icon:hover,
+.run-btn-icon:focus {
+  background: #f3f3f3 !important;
+  box-shadow: 0 6px 24px 0 #38b00022, 0 1.5px 6px #0001;
+  transform: translateY(-4px) scale(1.08);
+}
+
+.run-btn-icon:active {
+  background: #e0e0e0 !important;
+  box-shadow: 0 2px 8px 0 #38b00033, 0 1.5px 6px #0001;
+  transform: translateY(2px) scale(0.96);
+}
+
+.run-btn-icon:hover svg {
+  filter: brightness(0.5) drop-shadow(0 0 4px #38b00055);
+}
+
+.run-btn-icon:active svg {
+  filter: brightness(0.2) drop-shadow(0 0 2px #38b00099);
 }
 
 /* Visibility row: tickbox + run button horizontally aligned */
