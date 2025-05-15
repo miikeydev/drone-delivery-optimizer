@@ -1,40 +1,17 @@
-/**
- * Utilitaire pour tirer aléatoirement des villes françaises et les utiliser
- * comme points dans le réseau de livraison par drone
- */
+import { RNG, haversineDistance, insideFrance, setFrancePolygon } from './utils.js';
 
-/************** PARAMÈTRES **************************/
-const BIG_CITIES_QUOTA = {
-  hubs: 1,      // Hub par ville
-  delivery: 1,  // Point de livraison
-  pickup: 1,    // Point de collecte
-  charging: 2   // Stations dans le périmètre urbain
+// Tunable parameters for PO
+export const CONFIG = {
+  DEFAULT_PARAMS: { hubCount: 20, deliveryCount: 20, pickupCount: 20, chargingCount: 50 },
+  MIN_INTER_ROLE_KM: 3,
+  MIN_DIST_HUB_CHARGING: 0.02,
+  RELAY_CHARGING_EVERY_KM: 80,
+  MIN_CITY_DISTANCE_KM: 120,
+  RADIAL_PER_CITY: 6,
+  RADIAL_R_MIN_KM: 5,
+  RADIAL_R_MAX_KM: 10,
+  BIG_CITY_THRESHOLD: 200000
 };
-
-// Paramètres par défaut pour les nombres souhaités
-const DEFAULT_PARAMS = {
-  hubCount: 20,
-  chargingCount: 50,
-  deliveryCount: 20,
-  pickupCount: 20
-};
-
-// Seuil pour les grandes villes (en habitants)
-const BIG_CITY_THRESHOLD = 200000; 
-
-// Configuration des distances
-const MIN_DIST_HUB_CHARGING = 0.02;  // ~2 km (en degrés lat/lon ≈ simplification)
-const RELAY_CHARGING_EVERY_KM = 80;  // Station tous les 80 km sur les liaisons
-const MIN_CITY_DISTANCE_KM = 120;    // Distance minimale pour placer des relais
-
-// Paramètres pour les stations urbaines en anneau
-const RADIAL_PER_CITY = 6;           // Nombre de bornes dans l'anneau
-const RADIAL_R_MIN_KM = 5;           // Rayon minimum (km)
-const RADIAL_R_MAX_KM = 10;          // Rayon maximum (km)
-/***********************************************/
-
-import { RNG } from './utils.js';
-import { haversineDistance } from './utils.js';
 
 /**
  * Mélange un tableau de manière aléatoire (Fisher-Yates shuffle)
@@ -53,6 +30,7 @@ function shuffle(array) {
 /**
  * Complète une liste de points jusqu'à atteindre le nombre cible
  * en respectant une distance minimale avec les points existants
+ * et en restant dans la France et sans double booking.
  * 
  * @param {Array} list - Liste de points existants [lat, lng]
  * @param {number} target - Nombre cible à atteindre
@@ -63,14 +41,41 @@ function complete(list, target, pool, minDist = 0) {
   const shuffled = shuffle(pool);
   for (const c of shuffled) {
     if (list.length >= target) break;
-    
+    if (!insideFrance(c.lat, c.lng)) continue;
+    if (alreadyTaken(c.lat, c.lng)) continue;
     // Vérifie que le point est suffisamment éloigné de tous les points existants
     const ok = list.every(p => 
       haversineDistance(p[0], p[1], c.lat, c.lng) > minDist);
-    
-    if (ok) list.push([c.lat, c.lng]);
+    if (ok) pushSafe(list, c.lat, c.lng);
   }
 }
+
+// Set of all taken points (all roles)
+const taken = [];
+function alreadyTaken(lat, lng) {
+  return taken.some(p => haversineDistance(lat, lng, p[0], p[1]) < CONFIG.MIN_INTER_ROLE_KM);
+}
+function pushSafe(arr, lat, lng) {
+  if (!alreadyTaken(lat, lng) && insideFrance(lat, lng)) {
+    arr.push([lat, lng]);
+    taken.push([lat, lng]);
+  }
+}
+
+// Polar offset helper for role placement
+function polarOffsetKm(lat, lng, minKm, maxKm) {
+  const θ = RNG() * 2 * Math.PI;
+  const r = minKm + RNG() * (maxKm - minKm);
+  const km2deg = 1 / 111;
+  return [lat + r * km2deg * Math.cos(θ), lng + r * km2deg * Math.sin(θ)];
+}
+
+// Offsets for each role
+const OFFSET = {
+  hub:      { rKm: [8, 15] },   // périphérie
+  delivery: { rKm: [0, 0] },    // plein centre
+  pickup:   { rKm: [2, 5] }     // proche centre
+};
 
 /**
  * Sélectionne les villes, crée les points obligatoires, puis complète
@@ -85,40 +90,44 @@ export async function pickCityPoints() {
     if (!resp.ok) {
       throw new Error('Impossible de charger les données des villes');
     }
-    
-    const { cities } = await resp.json(); // [{name, lat, lng, pop}, …]
-    
+    const { cities } = await resp.json();
+
     // Séparer les grandes villes des villes moyennes
-    const big = cities.filter(c => c.pop > BIG_CITY_THRESHOLD)
-                     .sort((a, b) => b.pop - a.pop); // Gros → petit
-    const medium = cities.filter(c => c.pop <= BIG_CITY_THRESHOLD);
-    
+    const big = cities.filter(c => c.pop > CONFIG.BIG_CITY_THRESHOLD)
+                     .sort((a, b) => b.pop - a.pop);
+    const medium = cities.filter(c => c.pop <= CONFIG.BIG_CITY_THRESHOLD);
+
+    // Reset taken for each run
+    taken.length = 0;
+
     /* --------- 1. Points obligatoires par grande ville ---------- */
     const hubs = [];
     const delivery = [];
     const pickup = [];
     const charging = [];
-    
+
     big.forEach(city => {
-      // Ajouter un hub, un point de livraison et un point de collecte dans chaque grande ville
-      hubs.push([city.lat, city.lng]);          // Hub
-      delivery.push([city.lat, city.lng]);      // Delivery
-      pickup.push([city.lat, city.lng]);        // Pickup
-      
-      // Ajouter des stations de charge en anneau autour de la ville
-      for (let i = 0; i < RADIAL_PER_CITY; i++) {
-        const θ = (i / RADIAL_PER_CITY) * 2 * Math.PI; // Répartition uniforme sur le cercle
-        
-        // Convertir km en degrés (approximation)
-        const kmToDeg = 0.01; // ~1km ≈ 0.01 degré (approximation simplifiée)
-        const rMin = RADIAL_R_MIN_KM * kmToDeg;
-        const rMax = RADIAL_R_MAX_KM * kmToDeg;
+      // DELIVERY au centre
+      pushSafe(delivery, city.lat, city.lng);
+
+      // HUB déporté
+      const [hLat, hLng] = polarOffsetKm(city.lat, city.lng, ...OFFSET.hub.rKm);
+      pushSafe(hubs, hLat, hLng);
+
+      // PICKUP semi-central
+      const [pLat, pLng] = polarOffsetKm(city.lat, city.lng, ...OFFSET.pickup.rKm);
+      pushSafe(pickup, pLat, pLng);
+
+      // CHARGING en anneau
+      for (let i = 0; i < CONFIG.RADIAL_PER_CITY; i++) {
+        const θ = (i / CONFIG.RADIAL_PER_CITY) * 2 * Math.PI;
+        const kmToDeg = 1 / 111;
+        const rMin = CONFIG.RADIAL_R_MIN_KM;
+        const rMax = CONFIG.RADIAL_R_MAX_KM;
         const r = rMin + RNG() * (rMax - rMin);
-        
-        charging.push([
-          city.lat + r * Math.cos(θ),
-          city.lng + r * Math.sin(θ)
-        ]);
+        const lat = city.lat + r * kmToDeg * Math.cos(θ);
+        const lng = city.lng + r * kmToDeg * Math.sin(θ);
+        if (insideFrance(lat, lng)) pushSafe(charging, lat, lng);
       }
     });
 
@@ -126,39 +135,37 @@ export async function pickCityPoints() {
     for (let i = 0; i < big.length; i++) {
       for (let j = i + 1; j < big.length; j++) {
         const A = big[i], B = big[j];
-        const d = haversineDistance(A.lat, A.lng, B.lat, B.lng); // km
-        
-        if (d < MIN_CITY_DISTANCE_KM) continue; // Trop près, pas besoin de relais
-        
-        const n = Math.floor(d / RELAY_CHARGING_EVERY_KM);
+        const d = haversineDistance(A.lat, A.lng, B.lat, B.lng);
+        if (d < CONFIG.MIN_CITY_DISTANCE_KM) continue;
+        const n = Math.floor(d / CONFIG.RELAY_CHARGING_EVERY_KM);
         for (let k = 1; k <= n; k++) {
-          const t = k / (n + 1); // Interpolation le long du segment
-          charging.push([
-            A.lat + t * (B.lat - A.lat),
-            A.lng + t * (B.lng - A.lng)
-          ]);
+          const t = k / (n + 1);
+          const lat = A.lat + t * (B.lat - A.lat);
+          const lng = A.lng + t * (B.lng - A.lng);
+          if (!insideFrance(lat, lng)) continue;
+          pushSafe(charging, lat, lng);
         }
       }
     }
 
     /* --------- 3. Compléter pour atteindre les quotas globaux ---------- */
-    console.log("Current counts before completion:", 
+    console.log("Current counts before completion:",
                 hubs.length, delivery.length, pickup.length, charging.length);
-    console.log("Target counts:", 
-                DEFAULT_PARAMS.hubCount, DEFAULT_PARAMS.deliveryCount, 
-                DEFAULT_PARAMS.pickupCount, DEFAULT_PARAMS.chargingCount);
+    console.log("Target counts:",
+                CONFIG.DEFAULT_PARAMS.hubCount, CONFIG.DEFAULT_PARAMS.deliveryCount,
+                CONFIG.DEFAULT_PARAMS.pickupCount, CONFIG.DEFAULT_PARAMS.chargingCount);
 
     // Hubs supplémentaires si besoin (dans les villes moyennes d'abord)
-    complete(hubs, DEFAULT_PARAMS.hubCount, medium, MIN_DIST_HUB_CHARGING);
+    complete(hubs, CONFIG.DEFAULT_PARAMS.hubCount, medium, CONFIG.MIN_DIST_HUB_CHARGING);
 
     // Delivery & pickup : on peut ré-utiliser la même logique
-    complete(delivery, DEFAULT_PARAMS.deliveryCount, medium);
-    complete(pickup, DEFAULT_PARAMS.pickupCount, medium);
+    complete(delivery, CONFIG.DEFAULT_PARAMS.deliveryCount, medium);
+    complete(pickup, CONFIG.DEFAULT_PARAMS.pickupCount, medium);
 
     // Charging supplémentaires jusqu'au quota, en piochant partout
-    complete(charging, DEFAULT_PARAMS.chargingCount, cities, MIN_DIST_HUB_CHARGING);
+    complete(charging, CONFIG.DEFAULT_PARAMS.chargingCount, cities, CONFIG.MIN_DIST_HUB_CHARGING);
 
-    console.log("Final counts after completion:", 
+    console.log("Final counts after completion:",
                 hubs.length, delivery.length, pickup.length, charging.length);
 
     // LOG pour debug
@@ -171,7 +178,7 @@ export async function pickCityPoints() {
     );
 
     return { hubs, charging, delivery, pickup };
-    
+
   } catch (error) {
     console.error('Erreur lors du chargement des villes:', error);
     // Retourner un objet vide en cas d'erreur

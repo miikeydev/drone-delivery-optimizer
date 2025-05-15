@@ -37,3 +37,24 @@ export function gaussianRandom(mean = 0, stdev = 1) {
 export function rgbToHex(r, g, b) {
   return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
+
+/**
+ * Helper to check if a point is inside metropolitan France.
+ * Requires window.turf to be loaded (see index.html).
+ */
+let _francePoly = null;
+export function setFrancePolygon(geojson) {
+  _francePoly = geojson;
+}
+export function insideFrance(lat, lng) {
+  if (!_francePoly) {
+    throw new Error("France polygon not loaded. Call setFrancePolygon(geojson) first.");
+  }
+  if (!window.turf) {
+    throw new Error("Turf.js is not loaded. Make sure to import it in your HTML.");
+  }
+  return window.turf.booleanPointInPolygon(
+    window.turf.point([lng, lat]),
+    _francePoly
+  );
+}

@@ -1,6 +1,6 @@
 // Import functions from city-picker module
-import { pickCityPoints } from '/js/city-picker.js';
-import { haversineDistance, gaussianRandom, rgbToHex, RNG } from '/js/utils.js';
+import { pickCityPoints, CONFIG } from '/js/city-picker.js';
+import { haversineDistance, gaussianRandom, rgbToHex, RNG, insideFrance, setFrancePolygon } from './utils.js';
 
 // Map initialization code - only once
 const map = L.map('map').setView([46.6, 2.3], 6);
@@ -230,6 +230,7 @@ fetch('/data/metropole-version-simplifiee.geojson')
   .then(geojson => {
     console.log("GeoJSON chargé avec succès");
     francePoly = geojson;
+    setFrancePolygon(francePoly);
     
     // Display the outline on the map
     L.geoJSON(francePoly, { 
@@ -261,6 +262,7 @@ fetch('/data/metropole-version-simplifiee.geojson')
     };
     
     francePoly = franceBbox;
+    setFrancePolygon(francePoly);
     L.rectangle([[41.3, -5.2], [51.1, 9.5]], {color: "#444", weight: 1, fill: false}).addTo(map);
     generateNetwork();
   });
@@ -272,15 +274,6 @@ async function generateNetwork() {
   if (!francePoly) {
     alert("Les frontières de la France ne sont pas encore chargées. Veuillez patienter.");
     return;
-  }
-  
-  // Use the manually set wind direction if available
-  const windDirectionInput = document.getElementById('wind-direction-input');
-  if (windDirectionInput) {
-    // Get the angle in degrees from the input
-    const degrees = parseInt(windDirectionInput.value) || 0;
-    // Convert to radians
-    windAngle = (degrees * Math.PI / 180);
   }
   
   // Clear all existing layers
@@ -305,6 +298,7 @@ async function generateNetwork() {
   
   // Add points to their respective layers with higher z-index
   hubPoints.forEach((latlng, index) => {
+    if (!insideFrance(latlng[0], latlng[1])) return; // garde-fou ultime
     const id = `Hub ${index + 1}`;
     const marker = L.circleMarker(latlng, {
       color: COLORS.hubs,
@@ -334,6 +328,7 @@ async function generateNetwork() {
   
   // Similar handling for other point types
   chargingPoints.forEach((latlng, index) => {
+    if (!insideFrance(latlng[0], latlng[1])) return;
     const id = `Charging ${index + 1}`;
     const marker = L.circleMarker(latlng, {
       color: COLORS.charging,
@@ -360,6 +355,7 @@ async function generateNetwork() {
   });
   
   deliveryPoints.forEach((latlng, index) => {
+    if (!insideFrance(latlng[0], latlng[1])) return;
     const id = `Delivery ${index + 1}`;
     const marker = L.circleMarker(latlng, {
       color: COLORS.delivery,
@@ -386,6 +382,7 @@ async function generateNetwork() {
   });
   
   pickupPoints.forEach((latlng, index) => {
+    if (!insideFrance(latlng[0], latlng[1])) return;
     const id = `Pickup ${index + 1}`;
     const marker = L.circleMarker(latlng, {
       color: COLORS.pickup,
@@ -480,33 +477,64 @@ function runAlgorithm() {
   });
 }
 
-// Event listeners for UI controls
-document.getElementById('wind-direction-input').addEventListener('change', function() {
-  const degrees = parseInt(this.value) || 0;
-  const normalizedDegrees = ((degrees % 360) + 360) % 360;
-  this.value = normalizedDegrees;
-  
-  windAngle = (normalizedDegrees * Math.PI / 180);
-  
-  const windArrow = document.getElementById('wind-arrow');
+// --- Wind compass interactive control ---
+const windCompass = document.getElementById('wind-compass');
+const windArrow = document.getElementById('wind-arrow');
+const windAngleValue = document.getElementById('wind-angle-value');
+
+function setWindAngleFromDegrees(degrees) {
+  windAngle = (degrees * Math.PI / 180);
   if (windArrow) {
-    windArrow.style.transform = `translate(-50%, -50%) rotate(${normalizedDegrees}deg)`;
+    windArrow.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
   }
-  
+  if (windAngleValue) {
+    windAngleValue.textContent = `${Math.round(degrees)}°`;
+  }
+  // Recompute edge costs and redraw
   if (allNodes.length > 0 && allEdges.length > 0) {
     allEdges = annotateEdges(
       allEdges.map(e => ({ source: e.source, target: e.target, distance: e.distance })),
-      allNodes, 
-      windAngle, 
-      0.3, 
+      allNodes,
+      windAngle,
+      0.3,
       0.05
     );
-    
     drawGraph(allNodes, allEdges);
   }
-});
+}
 
-// Set up event listeners for the checkbox filters
+let draggingWind = false;
+function getAngleFromEvent(e) {
+  const rect = windCompass.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - cx;
+  const y = (e.touches ? e.touches[0].clientY : e.clientY) - cy;
+  let angle = Math.atan2(x, -y) * 180 / Math.PI; // 0° = N, 90° = E
+  if (angle < 0) angle += 360;
+  return angle;
+}
+
+if (windCompass) {
+  windCompass.addEventListener('mousedown', e => {
+    draggingWind = true;
+    setWindAngleFromDegrees(getAngleFromEvent(e));
+  });
+  windCompass.addEventListener('touchstart', e => {
+    draggingWind = true;
+    setWindAngleFromDegrees(getAngleFromEvent(e));
+  });
+  window.addEventListener('mousemove', e => {
+    if (draggingWind) setWindAngleFromDegrees(getAngleFromEvent(e));
+  });
+  window.addEventListener('touchmove', e => {
+    if (draggingWind) setWindAngleFromDegrees(getAngleFromEvent(e));
+  });
+  window.addEventListener('mouseup', () => { draggingWind = false; });
+  window.addEventListener('touchend', () => { draggingWind = false; });
+}
+
+// Event listeners for UI controls
 document.getElementById('toggle-hubs').addEventListener('change', function(e) {
   if (e.target.checked) {
     map.addLayer(hubsLayer);

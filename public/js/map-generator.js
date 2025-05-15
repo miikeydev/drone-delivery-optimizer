@@ -49,9 +49,6 @@ fetch('/data/metropole-version-simplifiee.geojson')
     
     // Ajuster la vue de la carte aux frontières de la France
     map.fitBounds(L.geoJSON(francePoly).getBounds());
-    
-    // Une fois la frontière prête, générer les points
-    generateAll();
   })
   .catch(err => {
     console.error('Erreur de chargement des frontières:', err);
@@ -71,51 +68,7 @@ fetch('/data/metropole-version-simplifiee.geojson')
     
     francePoly = franceBbox;
     L.rectangle([[41.3, -5.2], [51.1, 9.5]], {color: "#444", weight: 1, fill: false}).addTo(map);
-    generateAll();
   });
-
-/**
- * Génère count points Poisson-disc, mais ne conserve
- * que ceux qui sont DANS la France.
- */
-function generatePoissonPoints(count, minDist = 0.2) {
-  if (!francePoly) return [];
-  
-  const bounds = L.geoJSON(francePoly).getBounds();
-  const pts = [];
-
-  while (pts.length < count) {
-    const lat = Math.random() * (bounds.getNorth() - bounds.getSouth()) + bounds.getSouth();
-    const lng = Math.random() * (bounds.getEast() - bounds.getWest()) + bounds.getWest();
-    const pt = turf.point([lng, lat]);
-
-    // Vérifier si le point est dans la France
-    try {
-      if (!turf.booleanPointInPolygon(pt, francePoly)) continue;
-    } catch (e) {
-      console.warn("Erreur lors du test point-in-polygon:", e);
-      // En cas d'erreur, on accepte le point et continue
-      pts.push([lat, lng]);
-      continue;
-    }
-
-    // Vérifier la distance minimale avec les points existants
-    let tooClose = false;
-    for (const p of pts) {
-      const distance = turf.distance(pt, turf.point([p[1], p[0]]));
-      if (distance < minDist) {
-        tooClose = true;
-        break;
-      }
-    }
-    
-    if (!tooClose) {
-      pts.push([lat, lng]);
-    }
-  }
-
-  return pts;
-}
 
 /**
  * Calculate haversine distance between two points in km
@@ -331,183 +284,6 @@ function highlightNodeConnections(nodeIndex) {
   }
 }
 
-/**
- * Generate and display all points on the map
- */
-function generateAll() {
-  if (!francePoly) {
-    alert("Les frontières de la France ne sont pas encore chargées. Veuillez patienter.");
-    return;
-  }
-  
-  // Generate a new random wind angle
-  windAngle = Math.random() * 2 * Math.PI;
-  document.getElementById('wind-direction').innerHTML = `${(windAngle * 180 / Math.PI).toFixed(0)}°`;
-  
-  // Clear all existing layers
-  hubsLayer.clearLayers();
-  chargingLayer.clearLayers();
-  deliveryLayer.clearLayers();
-  pickupLayer.clearLayers();
-  edgesLayer.clearLayers();
-  
-  // Get counts from inputs
-  const hubCount = +document.getElementById('count-hubs').value;
-  const chargingCount = +document.getElementById('count-charging').value;
-  const deliveryCount = +document.getElementById('count-delivery').value;
-  const pickupCount = +document.getElementById('count-pickup').value;
-  
-  // Get k-NN value
-  const kNeighbors = +document.getElementById('k-neighbors').value;
-  
-  // Generate points with different minimum distances based on importance
-  const hubPoints = generatePoissonPoints(hubCount, 0.8);
-  const chargingPoints = generatePoissonPoints(chargingCount, 0.5);
-  const deliveryPoints = generatePoissonPoints(deliveryCount, 0.3);
-  const pickupPoints = generatePoissonPoints(pickupCount, 0.3);
-  
-  // Reset nodes array
-  allNodes = [];
-  
-  // Add points to their respective layers and to the nodes array
-  hubPoints.forEach((latlng, index) => {
-    const id = `Hub ${index + 1}`;
-    const marker = L.circleMarker(latlng, {
-      color: COLORS.hubs,
-      fillColor: COLORS.hubs,
-      fillOpacity: 0.8,
-      weight: 2,
-      radius: 8
-    }).addTo(hubsLayer);
-    marker.bindTooltip(id);
-    
-    // Add click event for highlighting
-    marker.on('click', function() {
-      const nodeIndex = allNodes.findIndex(n => n.id === id);
-      highlightedNodeId = highlightedNodeId === nodeIndex ? null : nodeIndex;
-      highlightNodeConnections(highlightedNodeId);
-    });
-    
-    // Add to nodes array
-    allNodes.push({
-      id: id,
-      lat: latlng[0],
-      lng: latlng[1],
-      type: 'hubs'
-    });
-  });
-  
-  chargingPoints.forEach((latlng, index) => {
-    const id = `Charging ${index + 1}`;
-    const marker = L.circleMarker(latlng, {
-      color: COLORS.charging,
-      fillColor: COLORS.charging,
-      fillOpacity: 0.8,
-      weight: 1,
-      radius: 6
-    }).addTo(chargingLayer);
-    marker.bindTooltip(id);
-    
-    // Add click event for highlighting
-    marker.on('click', function() {
-      const nodeIndex = allNodes.findIndex(n => n.id === id);
-      highlightedNodeId = highlightedNodeId === nodeIndex ? null : nodeIndex;
-      highlightNodeConnections(highlightedNodeId);
-    });
-    
-    // Add to nodes array
-    allNodes.push({
-      id: id,
-      lat: latlng[0],
-      lng: latlng[1],
-      type: 'charging'
-    });
-  });
-  
-  deliveryPoints.forEach((latlng, index) => {
-    const id = `Delivery ${index + 1}`;
-    const marker = L.circleMarker(latlng, {
-      color: COLORS.delivery,
-      fillColor: COLORS.delivery,
-      fillOpacity: 0.8,
-      weight: 1,
-      radius: 5
-    }).addTo(deliveryLayer);
-    marker.bindTooltip(id);
-    
-    // Add click event for highlighting
-    marker.on('click', function() {
-      const nodeIndex = allNodes.findIndex(n => n.id === id);
-      highlightedNodeId = highlightedNodeId === nodeIndex ? null : nodeIndex;
-      highlightNodeConnections(highlightedNodeId);
-    });
-    
-    // Add to nodes array
-    allNodes.push({
-      id: id,
-      lat: latlng[0],
-      lng: latlng[1],
-      type: 'delivery'
-    });
-  });
-  
-  pickupPoints.forEach((latlng, index) => {
-    const id = `Pickup ${index + 1}`;
-    const marker = L.circleMarker(latlng, {
-      color: COLORS.pickup,
-      fillColor: COLORS.pickup,
-      fillOpacity: 0.8,
-      weight: 1,
-      radius: 5
-    }).addTo(pickupLayer);
-    marker.bindTooltip(id);
-    
-    // Add click event for highlighting
-    marker.on('click', function() {
-      const nodeIndex = allNodes.findIndex(n => n.id === id);
-      highlightedNodeId = highlightedNodeId === nodeIndex ? null : nodeIndex;
-      highlightNodeConnections(highlightedNodeId);
-    });
-    
-    // Add to nodes array
-    allNodes.push({
-      id: id,
-      lat: latlng[0],
-      lng: latlng[1],
-      type: 'pickup'
-    });
-  });
-  
-  // Build graph if we have at least one node
-  if (allNodes.length > 0) {
-    // Get parameters for edge creation
-    const alpha = +document.getElementById('wind-factor').value;
-    const beta = +document.getElementById('noise-factor').value;
-    
-    // Build the k-nearest neighbors graph
-    const rawEdges = buildGraph(allNodes, kNeighbors);
-    
-    // Add wind and cost effects
-    allEdges = annotateEdges(rawEdges, allNodes, windAngle, alpha, beta);
-    
-    // Draw the graph
-    drawGraph(allNodes, allEdges);
-    
-    // Update the wind arrow on the compass
-    updateWindCompass(windAngle);
-  }
-}
-
-/**
- * Update the wind direction compass
- */
-function updateWindCompass(angle) {
-  const arrowEl = document.getElementById('wind-arrow');
-  if (arrowEl) {
-    arrowEl.style.transform = `rotate(${angle * 180 / Math.PI}deg)`;
-  }
-}
-
 // Set up the legend
 const legend = L.control({position: 'bottomright'});
 legend.onAdd = function() {
@@ -609,7 +385,9 @@ document.getElementById('toggle-pickup').addEventListener('change', function(e) 
 });
 
 // Set up the generate button
-document.getElementById('generate').addEventListener('click', generateAll);
+document.getElementById('generate').addEventListener('click', function() {
+  alert("City-picker approach is now used. Poisson logic has been removed.");
+});
 
 // Listen for edge display toggle
 document.getElementById('toggle-edges').addEventListener('change', function(e) {
