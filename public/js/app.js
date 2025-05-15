@@ -1,4 +1,8 @@
-// Map initialization code
+// Import functions from city-picker module
+import { pickCityPoints } from '/js/city-picker.js';
+import { haversineDistance, gaussianRandom, rgbToHex, RNG } from '/js/utils.js';
+
+// Map initialization code - only once
 const map = L.map('map').setView([46.6, 2.3], 6);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -19,25 +23,201 @@ const COLORS = {
   pickup: '#f39c12'     // Orange
 };
 
-// Default parameters for the network
-const DEFAULT_PARAMS = {
-  hubCount: 50,
-  chargingCount: 100,
-  deliveryCount: 20,
-  pickupCount: 20,
-  kNeighbors: 10
-};
+// Only keeping useful parameter
+const K_NEIGHBORS = 10;
 
 // Global variables for graph representation
 let allNodes = [];
 let allEdges = [];
-let windAngle = Math.random() * 2 * Math.PI; // Random wind angle in radians
+let windAngle = RNG() * 2 * Math.PI; // Random wind angle in radians but reproducible
 let highlightedNodeId = null;
 let francePoly;
 
 // Global variables for drone settings, initialized with default values
-window.batteryCapacity = 30;
+window.batteryCapacity = 100;
 window.maxPayload = 3;
+
+// Build k-nearest neighbors graph from nodes
+function buildGraph(nodes, k = K_NEIGHBORS) {
+  const edges = [];
+  
+  for (let i = 0; i < nodes.length; i++) {
+    // Calculate distances to all other nodes
+    const distances = nodes.map((node, j) => ({
+      index: j,
+      distance: haversineDistance(
+        nodes[i].lat, nodes[i].lng,
+        node.lat, node.lng
+      )
+    })).sort((a, b) => a.distance - b.distance);
+    
+    // Connect to k nearest neighbors (skip the first one as it's the node itself)
+    distances.slice(1, k + 1).forEach(({ index, distance }) => {
+      edges.push({
+        source: i,
+        target: index,
+        distance: distance
+      });
+    });
+  }
+  
+  return edges;
+}
+
+// Annotate edges with wind effects and costs
+function annotateEdges(edges, nodes, windAngle, alpha = 0.3, beta = 0.05) {
+  return edges.map(edge => {
+    const sourceNode = nodes[edge.source];
+    const targetNode = nodes[edge.target];
+    
+    // Calculate angle of the edge
+    const phi = Math.atan2(
+      targetNode.lat - sourceNode.lat,
+      targetNode.lng - sourceNode.lng
+    );
+    
+    // Calculate wind effect (-1 to 1, -1 being headwind, 1 being tailwind)
+    const windEffect = Math.cos(phi - windAngle);
+    
+    // Add random noise
+    const noise = gaussianRandom(0, 0.05);
+    
+    // Calculate final cost - tailwind friendly formula
+    const cost = edge.distance * (1 - alpha * windEffect + beta * noise);
+    
+    return {
+      ...edge,
+      windEffect,
+      phi,
+      cost
+    };
+  });
+}
+
+// Draw the graph on the map
+function drawGraph(nodes, edges) {
+  // Clear existing edges
+  edgesLayer.clearLayers();
+  
+  // Calculate min, mean, and max costs for color scaling
+  const costs = edges.map(e => e.cost);
+  const minCost = Math.min(...costs);
+  const maxCost = Math.max(...costs);
+  const meanCost = costs.reduce((sum, cost) => sum + cost, 0) / costs.length;
+  
+  // Create a color scale function
+  const getColor = (cost) => {
+    if (cost <= meanCost) {
+      // Scale from green to yellow
+      const t = (cost - minCost) / (meanCost - minCost);
+      return rgbToHex(
+        Math.round(46 + t * (241 - 46)),
+        Math.round(204 + t * (196 - 204)),
+        Math.round(113 + t * (15 - 113))
+      );
+    } else {
+      // Scale from yellow to red
+      const t = (cost - meanCost) / (maxCost - meanCost);
+      return rgbToHex(
+        Math.round(241 - t * (241 - 231)),
+        Math.round(196 - t * (196 - 76)),
+        Math.round(15 - t * (15 - 60))
+      );
+    }
+  };
+
+  // Draw all edges
+  edges.forEach(edge => {
+    const source = nodes[edge.source];
+    const target = nodes[edge.target];
+    const color = getColor(edge.cost);
+    
+    // Edge thickness inversely proportional to cost but reduced overall
+    const weight = 0.5 + 1.5 * (1 - (edge.cost - minCost) / (maxCost - minCost));
+    
+    const polyline = L.polyline(
+      [[source.lat, source.lng], [target.lat, target.lng]], 
+      {
+        color: color,
+        weight: weight,
+        opacity: 0.1, // Further reduced opacity
+        zIndex: 100  // Make sure edges are below nodes
+      }
+    ).addTo(edgesLayer);
+    
+    // Add arrow decoration with smaller size and reduced opacity
+    const decorator = L.polylineDecorator(polyline, {
+      patterns: [
+        {
+          offset: '70%',
+          repeat: 0,
+          symbol: L.Symbol.arrowHead({
+            pixelSize: 3, // Even smaller arrow size
+            polygon: true,
+            pathOptions: { color: color, fillOpacity: 0.1 } // Further reduced opacity
+          })
+        }
+      ]
+    }).addTo(edgesLayer);
+    
+    // Add tooltip with edge information
+    polyline.bindTooltip(`
+      <b>${source.id} → ${target.id}</b><br>
+      Distance: ${edge.distance.toFixed(2)} km<br>
+      Wind effect: ${edge.windEffect.toFixed(2)}<br>
+      Cost: ${edge.cost.toFixed(2)}
+    `, { sticky: true });
+    
+    // Store edge data for highlighting
+    polyline.sourceIndex = edge.source;
+    polyline.targetIndex = edge.target;
+  });
+}
+
+// Highlight edges connected to a node
+function highlightNodeConnections(nodeIndex) {
+  // Reset all edges to default style
+  edgesLayer.eachLayer(layer => {
+    if (layer instanceof L.Polyline) {
+      const edge = allEdges.find(e => 
+        e.source === layer.sourceIndex && e.target === layer.targetIndex
+      );
+      
+      if (edge) {
+        const costs = allEdges.map(e => e.cost);
+        const minCost = Math.min(...costs);
+        const maxCost = Math.max(...costs);
+        const weight = 0.5 + 1.5 * (1 - (edge.cost - minCost) / (maxCost - minCost));
+        
+        layer.setStyle({
+          weight: weight,
+          opacity: nodeIndex === layer.sourceIndex ? 0.7 : 0.15 // Highlight active, keep others faded
+        });
+      }
+    }
+  });
+  
+  // If a node is selected, highlight its outgoing edges
+  if (nodeIndex !== null) {
+    edgesLayer.eachLayer(layer => {
+      if (layer instanceof L.Polyline && layer.sourceIndex === nodeIndex) {
+        layer.setStyle({
+          weight: 2, // Slightly thicker for highlighted edges
+          opacity: 0.8 // More visible but still not too bright
+        });
+        layer.bringToFront();
+      }
+    });
+  }
+}
+
+// Update the wind direction compass
+function updateWindCompass(angle) {
+  const arrowEl = document.getElementById('wind-arrow');
+  if (arrowEl) {
+    arrowEl.style.transform = `translate(-50%, -50%) rotate(${angle * 180 / Math.PI}deg)`;
+  }
+}
 
 // Fetch France GeoJSON and initialize the map
 fetch('/data/metropole-version-simplifiee.geojson')
@@ -88,7 +268,7 @@ fetch('/data/metropole-version-simplifiee.geojson')
 /**
  * Generate the delivery network
  */
-function generateNetwork() {
+async function generateNetwork() {
   if (!francePoly) {
     alert("Les frontières de la France ne sont pas encore chargées. Veuillez patienter.");
     return;
@@ -110,11 +290,15 @@ function generateNetwork() {
   pickupLayer.clearLayers();
   edgesLayer.clearLayers();
   
-  // Generate points with different minimum distances based on importance
-  const hubPoints = generatePoissonPoints(DEFAULT_PARAMS.hubCount, 0.8);
-  const chargingPoints = generatePoissonPoints(DEFAULT_PARAMS.chargingCount, 0.5);
-  const deliveryPoints = generatePoissonPoints(DEFAULT_PARAMS.deliveryCount, 0.3);
-  const pickupPoints = generatePoissonPoints(DEFAULT_PARAMS.pickupCount, 0.3);
+  // Get points using the city picker instead of Poisson generation
+  const { hubs: hubPoints, charging: chargingPoints, delivery: deliveryPoints, pickup: pickupPoints } = await pickCityPoints();
+
+  // Ajoute ce log pour vérifier la génération
+  console.log("[app] hubs:", hubPoints.length, "delivery:", deliveryPoints.length, "pickup:", pickupPoints.length, "charging:", chargingPoints.length);
+  
+  // Log counts for debugging
+  console.log("Point counts (hubs, delivery, pickup, charging):", 
+              hubPoints.length, deliveryPoints.length, pickupPoints.length, chargingPoints.length);
   
   // Reset nodes array
   allNodes = [];
@@ -234,14 +418,18 @@ function generateNetwork() {
     const beta = 0.05;
     
     // Build the k-nearest neighbors graph
-    const rawEdges = buildGraph(allNodes, DEFAULT_PARAMS.kNeighbors);
+    const rawEdges = buildGraph(allNodes, K_NEIGHBORS);
     
     // Add wind and cost effects
     allEdges = annotateEdges(rawEdges, allNodes, windAngle, alpha, beta);
     
     // Draw the graph
     drawGraph(allNodes, allEdges);
-    
+
+    // Affiche le coût maximal d'une arête dans la console
+    const maxCost = Math.max(...allEdges.map(e => e.cost));
+    console.log("Coût maximal d'une arête sur la carte :", maxCost);
+
     // Update the wind arrow display
     const windArrow = document.getElementById('wind-arrow');
     if (windArrow) {
@@ -266,41 +454,54 @@ function runAlgorithm() {
     maxPayload
   });
   
-  // This is just a placeholder - the real implementation would be added later
-  alert(`Running ${algorithm.toUpperCase()} algorithm with ${batteryCapacity} battery units and ${maxPayload} max payload capacity.`);
+  // Make an AJAX call to the backend to run the algorithm
+  fetch('/api/run-algorithm', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      algorithm,
+      batteryCapacity,
+      maxPayload,
+      nodes: allNodes,
+      edges: allEdges,
+      windAngle
+    })
+  })
+  .then(response => response.json())
+  .then(data => {
+    console.log('Success:', data);
+    alert(`Algorithm completed! Distance: ${data.stats.distance} km, Battery used: ${data.stats.batteryUsed} units`);
+  })
+  .catch(error => {
+    console.error('Error:', error);
+    alert('Failed to run algorithm. Check the console for details.');
+  });
 }
 
-// Event listener for the wind direction input
+// Event listeners for UI controls
 document.getElementById('wind-direction-input').addEventListener('change', function() {
   const degrees = parseInt(this.value) || 0;
-  // Normalize degrees to 0-359
   const normalizedDegrees = ((degrees % 360) + 360) % 360;
   this.value = normalizedDegrees;
   
-  // Convert to radians
   windAngle = (normalizedDegrees * Math.PI / 180);
   
-  // Update wind arrow display
   const windArrow = document.getElementById('wind-arrow');
   if (windArrow) {
     windArrow.style.transform = `translate(-50%, -50%) rotate(${normalizedDegrees}deg)`;
   }
   
-  // If we have edges, recalculate costs with new wind direction and redraw
   if (allNodes.length > 0 && allEdges.length > 0) {
-    const alpha = 0.3; // Default value 
-    const beta = 0.05; // Default value
-    
-    // Recalculate edges with new wind angle
     allEdges = annotateEdges(
       allEdges.map(e => ({ source: e.source, target: e.target, distance: e.distance })),
       allNodes, 
       windAngle, 
-      alpha, 
-      beta
+      0.3, 
+      0.05
     );
     
-    // Redraw the graph
     drawGraph(allNodes, allEdges);
   }
 });
@@ -356,9 +557,4 @@ map.on('click', function(e) {
     highlightedNodeId = null;
     highlightNodeConnections(null);
   }
-});
-
-// Generate the network on page load
-document.addEventListener('DOMContentLoaded', function() {
-  // Nothing to do here - network is generated after France GeoJSON is loaded
 });

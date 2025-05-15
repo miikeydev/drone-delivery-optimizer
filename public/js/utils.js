@@ -1,7 +1,15 @@
 /**
+ * Utilities for the drone delivery optimizer
+ */
+import seedrandom from 'https://cdn.skypack.dev/seedrandom@3.0.5';
+
+// Change la graine ici pour avoir une carte reproductible
+export const RNG = seedrandom('drone-project-42');
+
+/**
  * Calculate haversine distance between two points in km
  */
-function haversineDistance(lat1, lon1, lat2, lon2) {
+export function haversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371; // Earth radius in kilometers
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -16,9 +24,9 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 /**
  * Generates a random number from a Gaussian distribution
  */
-function gaussianRandom(mean = 0, stdev = 1) {
-  const u = 1 - Math.random(); // Converting [0,1) to (0,1]
-  const v = Math.random();
+export function gaussianRandom(mean = 0, stdev = 1) {
+  const u = 1 - RNG(); // Converting [0,1) to (0,1] using RNG instead of Math.random()
+  const v = RNG();
   const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
   return z * stdev + mean;
 }
@@ -26,6 +34,6 @@ function gaussianRandom(mean = 0, stdev = 1) {
 /**
  * Convert RGB to Hex color code
  */
-function rgbToHex(r, g, b) {
+export function rgbToHex(r, g, b) {
   return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }

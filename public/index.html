@@ -62,21 +62,21 @@
           <!-- Battery capacity with modern slider -->
           <div class="battery-label">
             <span>Batterie</span>
-            <span id="drone-battery-value">30</span> unités
+            <span id="drone-battery-value">100</span> unités
           </div>
           
           <div class="modern-slider-container">
             <div class="modern-slider">
-              <div class="modern-slider-fill" id="battery-slider-fill" style="width: 50%;"></div>
-              <div class="modern-slider-handle" id="battery-slider-handle" style="left: 50%;"></div>
-              <div class="modern-slider-label" id="battery-slider-label" style="left: 50%;">30</div>
+              <div class="modern-slider-fill" id="battery-slider-fill" style="width: 100%;"></div>
+              <div class="modern-slider-handle" id="battery-slider-handle" style="left: 100%;"></div>
+              <div class="modern-slider-label" id="battery-slider-label" style="left: 100%;">100</div>
             </div>
             <div class="modern-slider-ticks">
               <div class="modern-slider-tick">10</div>
-              <div class="modern-slider-tick">20</div>
               <div class="modern-slider-tick">30</div>
-              <div class="modern-slider-tick">40</div>
               <div class="modern-slider-tick">50</div>
+              <div class="modern-slider-tick">70</div>
+              <div class="modern-slider-tick">100</div>
             </div>
           </div>
           
@@ -194,189 +194,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-polylinedecorator/dist/leaflet.polylineDecorator.js"></script>
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
-  
-  <!-- Modular script imports -->
-  <script src="/js/utils.js"></script>
-  <script src="/js/poisson.js"></script>
-  <script src="/js/graph.js"></script>
-  <script src="/js/drawer.js"></script>
-  <script src="/js/app.js"></script>
-  
-  <script>
-    window.addEventListener('DOMContentLoaded', function() {
-      if (!L || typeof L.map !== 'function') {
-        alert('Problème avec la bibliothèque Leaflet. Vérifiez votre connexion Internet.');
-      }
-      
-      // Initialize wind direction control
-      const windDirectionInput = document.getElementById('wind-direction-input');
-      const windArrow = document.getElementById('wind-arrow');
-      
-      // Update arrow when input changes
-      windDirectionInput.addEventListener('change', function() {
-        let degrees = parseInt(this.value) || 0;
-        // Ensure value is between 0-359
-        degrees = ((degrees % 360) + 360) % 360;
-        this.value = degrees;
-        
-        // Convert degrees to radians for internal use
-        windAngle = (degrees * Math.PI / 180);
-        
-        // Update UI
-        windArrow.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
-      });
-      
-      // Sync initial values
-      windDirectionInput.value = Math.round((windAngle * 180 / Math.PI) % 360);
-      windArrow.style.transform = `translate(-50%, -50%) rotate(${windDirectionInput.value}deg)`;
-      
-      // Setup algorithm toggle
-      const toggle = document.querySelector('.algorithm-toggle');
-      const options = document.querySelectorAll('.algorithm-option');
-      
-      options.forEach(option => {
-        option.addEventListener('click', function() {
-          const value = this.getAttribute('data-value');
-          toggle.setAttribute('data-selected', value);
-          
-          options.forEach(opt => {
-            opt.classList.toggle('active', opt === this);
-          });
-        });
-      });
-      
-      // Setup battery slider
-      setupBatterySlider();
-      
-      // Setup package icons
-      setupPackageIcons();
-    });
-    
-    function setupBatterySlider() {
-      const min = 10;
-      const max = 50;
-      const slider = document.querySelector('.modern-slider');
-      const handle = document.getElementById('battery-slider-handle');
-      const fill = document.getElementById('battery-slider-fill');
-      const label = document.getElementById('battery-slider-label');
-      const valueDisplay = document.getElementById('drone-battery-value');
-      let isDragging = false;
-      
-      function updateSlider(clientX) {
-        const rect = slider.getBoundingClientRect();
-        let x = clientX - rect.left;
-        
-        // Constrain x to the slider width
-        x = Math.max(0, Math.min(x, rect.width));
-        
-        // Convert to percentage
-        const percentage = x / rect.width;
-        
-        // Convert to value between min and max
-        const value = Math.round(min + percentage * (max - min));
-        
-        // Update UI
-        const leftPos = percentage * 100;
-        handle.style.left = `${leftPos}%`;
-        fill.style.width = `${leftPos}%`;
-        label.style.left = `${leftPos}%`;
-        label.textContent = value;
-        valueDisplay.textContent = value;
-        
-        // Store the value
-        window.batteryCapacity = value;
-        
-        // Ensure the label stays within view
-        const labelRect = label.getBoundingClientRect();
-        if (labelRect.right > rect.right) {
-          label.style.transform = 'translate(-100%, -100%)';
-        } else if (labelRect.left < rect.left) {
-          label.style.transform = 'translate(0, -100%)';
-        } else {
-          label.style.transform = 'translate(-50%, -100%)';
-        }
-      }
-      
-      // Set initial value (30)
-      const initialValue = 30;
-      const initialPercentage = (initialValue - min) / (max - min);
-      handle.style.left = `${initialPercentage * 100}%`;
-      fill.style.width = `${initialPercentage * 100}%`;
-      label.style.left = `${initialPercentage * 100}%`;
-      label.textContent = initialValue;
-      window.batteryCapacity = initialValue;
-      
-      // Mouse events
-      handle.addEventListener('mousedown', function(e) {
-        isDragging = true;
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onRelease);
-        e.preventDefault(); // Prevent text selection
-      });
-      
-      slider.addEventListener('click', function(e) {
-        if (e.target !== handle) {
-          updateSlider(e.clientX);
-        }
-      });
-      
-      function onMove(e) {
-        if (isDragging) {
-          updateSlider(e.clientX);
-        }
-      }
-      
-      function onRelease() {
-        isDragging = false;
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onRelease);
-      }
-      
-      // Touch events
-      handle.addEventListener('touchstart', function(e) {
-        isDragging = true;
-        document.addEventListener('touchmove', onTouchMove);
-        document.addEventListener('touchend', onTouchEnd);
-        e.preventDefault();
-      });
-      
-      function onTouchMove(e) {
-        if (isDragging && e.touches[0]) {
-          updateSlider(e.touches[0].clientX);
-        }
-      }
-      
-      function onTouchEnd() {
-        isDragging = false;
-        document.removeEventListener('touchmove', onTouchMove);
-        document.removeEventListener('touchend', onTouchEnd);
-      }
-    }
-    
-    function setupPackageIcons() {
-      const packageIcons = document.querySelectorAll('.package-icon');
-      const valueDisplay = document.getElementById('drone-payload-value');
-      
-      // Initialize with 3 packages active
-      updatePackageIcons(3);
-      
-      packageIcons.forEach(icon => {
-        icon.addEventListener('click', function() {
-          const index = parseInt(this.getAttribute('data-index'));
-          updatePackageIcons(index);
-        });
-      });
-      
-      function updatePackageIcons(maxActive) {
-        packageIcons.forEach(icon => {
-          const index = parseInt(icon.getAttribute('data-index'));
-          icon.classList.toggle('active', index <= maxActive);
-        });
-        
-        valueDisplay.textContent = maxActive;
-        window.maxPayload = maxActive;
-      }
-    }
-  </script>
+  <script src="/js/app.js" type="module"></script>
 </body>
 </html>
