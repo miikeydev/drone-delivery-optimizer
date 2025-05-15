@@ -219,13 +219,15 @@ body, html {
   border-radius: 16px;
   padding: 2px;
   position: relative;
-  width: 100%;
+  width: 170px;
   height: 32px;
   box-shadow: 0 2px 8px rgba(56, 176, 0, 0.10), 0 1.5px 6px rgba(0,0,0,0.06);
   border: none;
   display: flex;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 0;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .algorithm-option {
@@ -332,29 +334,38 @@ button:disabled {
 
 /* Run button */
 .run-btn {
-  background: transparent !important;
-  color: #333 !important;
-  border: none;
-  border-radius: 0;
-  font-size: 22px !important;
-  font-weight: normal;
-  width: auto;
-  min-width: 0;
-  margin: 0 0 0 10px !important;
+  background: #fff !important;
+  border: 2px solid var(--green-light);
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  max-width: 36px;
+  max-height: 36px;
+  margin: 0 !important;
   padding: 0 !important;
   display: flex;
   align-items: center;
-  box-shadow: none;
-  transition: none;
-  height: 24px;
-  line-height: 1;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(56, 176, 0, 0.10);
+  transition: box-shadow 0.2s, background 0.2s;
 }
 
 .run-btn:hover {
-  background: transparent !important;
-  color: #111 !important;
-  box-shadow: none;
-  transform: scale(1.1);
+  background: #eaffea !important;
+  box-shadow: 0 4px 12px rgba(56, 176, 0, 0.18);
+  transform: scale(1.08);
+}
+
+.run-btn:active {
+  background: #d6ffd6 !important;
+  transform: scale(1.0);
+}
+
+.run-btn svg {
+  display: block;
+  margin: auto;
 }
 
 /* Visibility row: tickbox + run button horizontally aligned */
@@ -363,6 +374,14 @@ button:disabled {
   align-items: center;
   gap: 0;
   margin-bottom: 10px;
+}
+
+/* Algo row: toggle + run button inline */
+.algo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 /* Checkboxes */

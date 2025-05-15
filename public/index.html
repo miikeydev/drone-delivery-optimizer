@@ -42,12 +42,19 @@
         <!-- Algorithm Selection with toggle style -->
         <div class="control-section">
           <h3>Algorithme</h3>
-          <div class="algorithm-toggle" data-selected="ga">
-            <div class="algorithm-selector"></div>
-            <div class="algorithm-option active" data-value="ga">GA</div>
-            <div class="algorithm-option" data-value="gnn">GNN + PPO</div>
+          <div class="algo-row">
+            <div class="algorithm-toggle" data-selected="ga">
+              <div class="algorithm-selector"></div>
+              <div class="algorithm-option active" data-value="ga">GA</div>
+              <div class="algorithm-option" data-value="gnn">GNN + PPO</div>
+            </div>
+            <button id="run-algo" class="run-btn" title="Run">
+              <svg viewBox="0 0 24 24" width="22" height="22" style="vertical-align:middle;">
+                <circle cx="12" cy="12" r="11" fill="#38b000" stroke="#1a2d1a" stroke-width="1.5"/>
+                <polygon points="10,8 17,12 10,16" fill="#fff"/>
+              </svg>
+            </button>
           </div>
-          <button id="run-algo" class="run-btn">Run</button>
         </div>
 
         <div class="divider"></div>
