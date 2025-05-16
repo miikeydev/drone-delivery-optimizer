@@ -1,0 +1,218 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+
+% Added definitions for missing commands
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+
+\title{\texorpdfstring{Optimisation de tournées de drones à l'aide d'un GNN--PPO\\\small Projet Drone Delivery Optimizer}{Optimisation de tournées de drones à l'aide d'un GNN-PPO - Projet Drone Delivery Optimizer}}
+\author{\texorpdfstring{\small Mahouna \_\_ \quad (RTX~4050 / Intel i7)}{Mahouna __ (RTX 4050 / Intel i7)}}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+%-------------------------------------------------------------
+\section{Introduction}
+Ce rapport présente la modélisation mathématique et l'implémentation d'une méthode hybride pour l'optimisation de tournées de drones : 
+\begin{enumerate}
+  \item un \emph{Algorithme Génétique} (GA) classique corrigé pour garantir les points de départ et d'arrivée,
+  \item une approche \textbf{PPO} (Proximal Policy Optimization) alimentée par un \textbf{GNN} pour l'apprentissage par renforcement.
+\end{enumerate}
+
+%-------------------------------------------------------------
+\section{Modèle de réseau de livraison}
+\subsection{Génération des nœuds}
+On génère \(N\) nœuds répartis par Poisson–disc à l'intérieur du polygone \emph{France}, issus du fichier \texttt{metropole-version-simplifiee.geojson}.
+
+\subsection{Graphe orienté des \texorpdfstring{\(k\)}{k}-plus-proches-voisins}
+Chaque nœud \(u\) est connecté vers ses \(k=10\) plus proches voisins \emph{sortants}, formant un graphe orienté 
+\[
+  G_t = (\mathcal{V}_t,\mathcal{E}_t),\quad \mathcal{E}_t\subset \{\,u\to v\,\}.
+\]
+Chaque arête orientée \(e=(u\!\to\!v)\) porte un coût 
+\[
+  c_{uv}
+  = \underbrace{d_{uv}}_{\text{distance}}
+  + \underbrace{w_{uv}}_{\text{effet du vent}}
+  + \underbrace{\eta_{uv}}_{\text{bruit aléatoire}}
+  \;\in[0,600],
+\]
+où en général \(c_{uv}\neq c_{vu}\).
+
+\subsection{Attributs nodaux \texorpdfstring{\(X\)}{X}}
+Pour chaque sommet \(v\), on définit
+\[
+  x_v = \bigl[
+    \underbrace{\text{one-hot}(\text{type})}_{\in\{\,\text{hub},\text{pickup},\text{delivery},\text{charging}\}\, (4)},
+    \;
+    \underbrace{\text{stock/demande}}_{\in\R\, (1)},
+    \;
+    \underbrace{\lambda_v,\phi_v}_{\text{latitude/longitude}\,(2)},
+    \;
+    \underbrace{\cos\omega_v,\sin\omega_v}_{\text{direction du vent}\,(2)}
+  \bigr]\;\in\R^{9}.
+\]
+Le terme « stock/demande » reste nul ou constant ici car on part d'une hypothèse de demande unitaire illimitée.
+
+%-------------------------------------------------------------
+\section{Fonction de coût généralisée}
+\subsection{Consommation de batterie par arête}
+Pour une arête \(e_i\) de coût \(c_i\), la batterie consommée est
+\[
+  \Delta b_i
+  = \frac{c_i}{k}\,\bigl(1 + \alpha\,(p_i - 1)\bigr),
+  \quad
+  \underbrace{k=10.8}_{\text{normalisation}},\;
+  \underbrace{\alpha=0.2}_{\substack{\text{facteur de surcharge}\\\text{(colis multiple)}}},\;
+  \underbrace{p_i}_{\text{nombre de colis embarqués}}.
+\]
+Plus \(p_i\) est grand, plus la consommation augmente.
+
+\subsection{Objectif global d'une tournée \texorpdfstring{\(E\)}{E}}
+Pour une séquence d'arêtes \(E=(e_1,\dots,e_T)\), on définit
+\[
+  J(E)
+  =
+  \sum_{e_i\in E} c_i
+  \;+\;
+  \lambda
+  \sum_{S}
+    \Bigl[\max\bigl(0,\sum_{e_i\in S}\Delta b_i - B_{\max}\bigr)\Bigr]^2
+  \;+\;
+  \mu\,\#\{\text{recharges}\},
+\]
+où
+\begin{itemize}
+  \item \(B_{\max}=100\) est la capacité maximale de batterie,
+  \item \(\lambda\gg1\) pénalise fortement tout dépassement de batterie,
+  \item \(\mu\ll\lambda\) pénalise légèrement chaque recharge,
+  \item \(S\) parcourt chaque segment consécutif entre deux recharges.
+\end{itemize}
+
+%-------------------------------------------------------------
+\section{Contraintes de début et fin de tournée}
+
+\subsection{1. Algorithme génétique (GA)}
+\label{subsec:GA_constraints}
+
+\paragraph{But} Générer des chromosomes (tours) garantissant la séquence :
+\[
+  H_{\text{start}} \;\to\; D \;\to\; L \;\to\; H_{\text{end}},
+\]
+avec \(H_{\cdot}\) hubs et \(D,L\) points pickup/delivery.
+
+\paragraph{Initialisation} Pour chaque individu :
+\begin{enumerate}
+  \item Choix aléatoire d'un hub \(H_{\text{start}}\).
+  \item Construction de \(\mathrm{shortest\_path}(H_{\text{start}}\to D)\).
+  \item Ajout de \(\mathrm{shortest\_path}(D\to L)\).
+  \item Ajout de \(\mathrm{shortest\_path}(L\to H_{\text{end}})\) avec \(H_{\text{end}}\) choisi aléatoirement.
+\end{enumerate}
+Le chromosome est la concaténation, en omettant les doublons consécutifs.
+
+\paragraph{Réparation (repair)} Après crossover/mutation :
+\begin{itemize}
+  \item On repère les indices de \(D\) et \(L\).
+  \item On sectionne pour forcer \( \dots\to D\to L\to\dots\).
+  \item Si la fin n'est pas un hub, on y greffe \(\mathrm{shortest\_path}(\text{dernier}\to H_{\text{rand}})\).
+\end{itemize}
+
+\paragraph{Mutation spécifique}  
+Échanger deux sous-chemins internes tout en maintenant la séquence \(H\to D\to L\to H\).
+
+%-------------------------------------------------------------
+\subsection{2. PPO + GNN (RL)}
+\label{subsec:RL_constraints}
+
+\paragraph{Intégration dans l'environnement}  
+Au sein de l'environnement de RL :
+\begin{itemize}
+  \item \emph{État initial virtuel} : l’agent reçoit un état “départ” non relié.
+  \item \emph{Pas 0} : action spéciale 
+    \[
+      a_0 = \bigl(\text{téléportation vers un hub }H_i\bigr),
+      \quad \text{coût}=c_{\text{pickup}\to H_i}.
+    \]
+    Ce hub \(H_i\) est tiré aléatoirement parmi ceux \(\le d_{\max}\) du point de pickup.
+  \item \emph{Fin de tournée} : après desserte de \(D\) et \(L\), l’agent choisit
+    \[
+      a_T = \bigl(\text{téléportation vers hub }H_j\bigr),
+      \quad \text{coût}=c_{v_T\to H_j}.
+    \]
+  \item \emph{Termination} : l’épisode se termine dès que tous les flags \(\{\text{picked},\text{delivered}\}\) sont à 1 et qu’un hub est rejoint.
+\end{itemize}
+
+\paragraph{Récompense instantanée mise à jour}
+Pour tout pas \(t\),
+\[
+  r_t 
+  = -\,c_t
+    - \lambda\,\bigl[\max(0,b_t - \Delta b_t)\bigr]^2
+    - \mu\,\mathbb1_{\{\text{recharge}\}}
+    - \kappa\,\mathbb1_{\{\text{téléportation non valide}\}},
+\]
+où \(\kappa\gg1\) pénalise tout téléport illégal hors hub.
+
+%-------------------------------------------------------------
+\section{Formulation RL et Architecture du GNN}
+\subsection{État \texorpdfstring{\(\displaystyle s_t=(A_t,X_t,b_t,p_t,v_t)\)}{s_t=(A_t,X_t,b_t,p_t,v_t)}}
+
+\subsection{Action \texorpdfstring{\(\displaystyle a_t\in\{1,\dots,K\}\)}{a_t in {1,...,K}}}  
+Choix d’une arête orientée sortante ou d’une action spéciale de téléportation.
+
+\subsection{GNN – Message Passing}
+\[
+  H^{(\ell+1)} 
+  = \sigma\bigl(W_1^{(\ell)}H^{(\ell)} + W_2^{(\ell)}A_t\,H^{(\ell)}\bigr),
+  \quad 
+  H^{(0)}=X_t.
+\]
+
+\subsection{Readout global et tête acteur–critique}
+\[
+  g_t = \frac1{|\mathcal V_t|}\sum_v H_v^{(L)},
+\quad
+\pi_\theta(a_t\mid s_t)=\mathrm{Softmax}(W_\pi g_t + U_\pi[b_t,p_t]),
+\quad
+V_\psi(s_t)=w_v^\top g_t + u_v^\top[b_t,p_t].
+\]
+
+%-------------------------------------------------------------
+\section{Algorithme PPO}
+\subsection{Avantage (GAE-\texorpdfstring{\(\lambda\)}{\lambda})}
+\[
+  \hat A_t 
+  = \sum_{k\ge0}(\gamma\lambda)^k\bigl(r_{t+k}+\gamma V_\psi(s_{t+k+1})-V_\psi(s_{t+k})\bigr).
+\]
+
+\subsection{Perte « clipped »}
+\[
+  \mathcal L
+  = \E_t\Bigl[\min\bigl(r_t\hat A_t,\;\mathrm{clip}(r_t,1\pm\varepsilon)\hat A_t\bigr)\Bigr]
+    +c_1\|R_t-V_\psi\|^2 - c_2\,\mathcal H[\pi_\theta].
+\]
+
+%-------------------------------------------------------------
+\section{Protocole d'entraînement}
+\begin{itemize}
+  \item \(N=8\) environnements parallèles.
+  \item \(\gamma=0.99,\ \lambda_{\text{GAE}}=0.95,\ \varepsilon=0.2\).
+  \item GNN : 2 couches, dimension 128, ReLU, dropout 0.1.
+  \item Adam, LR \(3\times10^{-4}\), FP16 sur RTX~4050.
+\end{itemize}
+
+%-------------------------------------------------------------
+\section{Conclusion}
+L’intégration explicite des contraintes de téléportation via un hub garantit la validité des tournées tant dans GA (par génération/réparation) que dans PPO+GNN (par encapsulation dans l’environnement). Le GNN–PPO exploite les coûts orientés \(c_{uv}\) et converge plus rapidement qu’un GA classique tout en respectant les contraintes de batterie grâce aux pénalités \(\lambda\) et \(\mu\).
+
+\end{document}

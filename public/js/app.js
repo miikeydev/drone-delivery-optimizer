@@ -1,4 +1,5 @@
 // Import functions from city-picker module
+// Importing CONFIG for potential future use and to document dependency
 import { pickCityPoints, CONFIG } from '/js/city-picker.js';
 import { haversineDistance, gaussianRandom, rgbToHex, RNG, insideFrance, setFrancePolygon } from './utils.js';
 
