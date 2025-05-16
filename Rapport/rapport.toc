@@ -1,27 +1,28 @@
 \contentsline {section}{\numberline {1}Introduction}{2}{section.1}%
 \contentsline {section}{\numberline {2}Modèle de réseau de livraison}{2}{section.2}%
-\contentsline {subsection}{\numberline {2.1}Génération des nœuds}{2}{subsection.2.1}%
-\contentsline {subsection}{\numberline {2.2}Graphe orienté des \(k\)-plus-proches-voisins}{2}{subsection.2.2}%
-\contentsline {subsection}{\numberline {2.3}Attributs nodaux \(X\)}{2}{subsection.2.3}%
-\contentsline {section}{\numberline {3}Fonction de coût généralisée}{2}{section.3}%
-\contentsline {subsection}{\numberline {3.1}Consommation de batterie par arête}{2}{subsection.3.1}%
-\contentsline {subsection}{\numberline {3.2}Objectif global d'une tournée \(E\)}{3}{subsection.3.2}%
+\contentsline {subsection}{\numberline {2.1}Graphe orienté des \(k\)-plus-proches-voisins}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Attributs nodaux \(X\)}{2}{subsection.2.2}%
+\contentsline {section}{\numberline {3}Fonction de coût généralisée}{3}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Effet du vent sur les coûts d'arêtes}{3}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Consommation de batterie par arête}{3}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Objectif global d'une tournée \(E\)}{3}{subsection.3.3}%
 \contentsline {section}{\numberline {4}Contraintes de début et fin de tournée}{3}{section.4}%
 \contentsline {subsection}{\numberline {4.1}1. Algorithme génétique (GA)}{3}{subsection.4.1}%
-\contentsline {paragraph}{But}{3}{section*.2}%
-\contentsline {paragraph}{Initialisation}{3}{section*.3}%
-\contentsline {paragraph}{Réparation (repair)}{3}{section*.4}%
-\contentsline {paragraph}{Mutation spécifique}{3}{section*.5}%
+\contentsline {paragraph}{But}{3}{section*.3}%
+\contentsline {paragraph}{Initialisation}{3}{section*.4}%
+\contentsline {paragraph}{Réparation (repair)}{4}{section*.5}%
+\contentsline {paragraph}{Mutation spécifique}{4}{section*.6}%
 \contentsline {subsection}{\numberline {4.2}2. PPO + GNN (RL)}{4}{subsection.4.2}%
-\contentsline {paragraph}{Intégration dans l'environnement}{4}{section*.6}%
-\contentsline {paragraph}{Récompense instantanée mise à jour}{4}{section*.7}%
-\contentsline {section}{\numberline {5}Formulation RL et Architecture du GNN}{4}{section.5}%
-\contentsline {subsection}{\numberline {5.1}État \(\displaystyle s_t=(A_t,X_t,b_t,p_t,v_t)\)}{4}{subsection.5.1}%
-\contentsline {subsection}{\numberline {5.2}Action \(\displaystyle a_t\in \{1,\dots ,K\}\)}{4}{subsection.5.2}%
-\contentsline {subsection}{\numberline {5.3}GNN – Message Passing}{4}{subsection.5.3}%
-\contentsline {subsection}{\numberline {5.4}Readout global et tête acteur–critique}{4}{subsection.5.4}%
-\contentsline {section}{\numberline {6}Algorithme PPO}{4}{section.6}%
-\contentsline {subsection}{\numberline {6.1}Avantage (GAE-\(\lambda \))}{4}{subsection.6.1}%
-\contentsline {subsection}{\numberline {6.2}Perte « clipped »}{4}{subsection.6.2}%
-\contentsline {section}{\numberline {7}Protocole d'entraînement}{5}{section.7}%
-\contentsline {section}{\numberline {8}Conclusion}{5}{section.8}%
+\contentsline {paragraph}{Intégration des contraintes (mise à jour)}{4}{section*.7}%
+\contentsline {subsection}{\numberline {4.3}Encodage de l’état \(s_t\)}{4}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}Architecture du GNN}{5}{subsection.4.4}%
+\contentsline {subsection}{\numberline {4.5}Readout et têtes acteur–critique}{5}{subsection.4.5}%
+\contentsline {paragraph}{Politique (acteur)}{5}{section*.8}%
+\contentsline {paragraph}{Critique}{5}{section*.9}%
+\contentsline {subsection}{\numberline {4.6}Récompense instantanée}{5}{subsection.4.6}%
+\contentsline {section}{\numberline {5}Algorithme PPO}{5}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Avantage (GAE-\(\lambda \))}{5}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Perte « clipped »}{5}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Pipeline d’entraînement}{5}{subsection.5.3}%
+\contentsline {paragraph}{Hyperparamètres typiques}{6}{section*.10}%
+\contentsline {section}{\numberline {6}Conclusion}{6}{section.6}%
