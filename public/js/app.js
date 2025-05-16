@@ -2,6 +2,8 @@
 // Importing CONFIG for potential future use and to document dependency
 import { pickCityPoints, CONFIG } from '/js/city-picker.js';
 import { haversineDistance, gaussianRandom, rgbToHex, RNG, insideFrance, setFrancePolygon } from './utils.js';
+// Import the genetic algorithm
+import { runGeneticAlgorithm } from '/js/genetic-algorithm.js';
 
 // Map initialization code - only once
 const map = L.map('map').setView([46.6, 2.3], 6);
@@ -33,6 +35,10 @@ let allEdges = [];
 let windAngle = RNG() * 2 * Math.PI; // Random wind angle in radians but reproducible
 let highlightedNodeId = null;
 let francePoly;
+
+// Variables pour stocker les hubs sélectionnés
+let selectedStartHub = null;
+let selectedEndHub = null;
 
 // Global variables for drone settings, initialized with default values
 window.batteryCapacity = 100;
@@ -426,15 +432,150 @@ async function generateNetwork() {
 
     // Affiche le coût maximal d'une arête dans la console
     const maxCost = Math.max(...allEdges.map(e => e.cost));
-    console.log("Coût maximal d'une arête sur la carte :", maxCost);
-
-    // Update the wind arrow display
+    console.log("Coût maximal d'une arête sur la carte :", maxCost);    // Update the wind arrow display
     const windArrow = document.getElementById('wind-arrow');
     if (windArrow) {
       const degrees = Math.round((windAngle * 180 / Math.PI) % 360);
       windArrow.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
     }
+    
+    // Populate hub selectors
+    populateHubSelectors();
+    
+    // Reset hub selection
+    selectedStartHub = null;
+    selectedEndHub = null;
   }
+}
+
+// Variables to track route visualizations
+let routePolylines = [];
+let routeDecorators = [];
+let routeMarkers = [];
+
+/**
+ * Clears any existing route displays from the map
+ */
+function clearRouteDisplays() {
+  // Remove polylines
+  routePolylines.forEach(polyline => map.removeLayer(polyline));
+  routePolylines = [];
+  
+  // Remove decorators
+  routeDecorators.forEach(decorator => map.removeLayer(decorator));
+  routeDecorators = [];
+  
+  // Remove markers
+  routeMarkers.forEach(marker => map.removeLayer(marker));
+  routeMarkers = [];
+}
+
+/**
+ * Displays a route on the map with segment information
+ * @param {Array} routeIndices - Array of node indices representing the route
+ * @param {Array} segmentDetails - Optional array of details for each segment
+ */
+function displayRoute(routeIndices, segmentDetails = null) {
+  if (!routeIndices || routeIndices.length < 2) return;
+  
+  // Prepare route points
+  const routePoints = routeIndices.map(idx => [allNodes[idx].lat, allNodes[idx].lng]);
+  
+  // Create a polyline for the route
+  const routePolyline = L.polyline(routePoints, {
+    color: '#FF4500',  // Orange-red
+    weight: 4,
+    opacity: 0.8,
+    zIndex: 1000  // Above other lines
+  }).addTo(map);
+  
+  routePolylines.push(routePolyline);
+  
+  // Add direction arrows
+  const routeDecorator = L.polylineDecorator(routePolyline, {
+    patterns: [
+      {
+        offset: '5%',
+        repeat: '10%',
+        symbol: L.Symbol.arrowHead({
+          pixelSize: 15,
+          polygon: true,
+          pathOptions: { 
+            color: '#FF4500',
+            fillOpacity: 0.8,
+            weight: 0
+          }
+        })
+      }
+    ]
+  }).addTo(map);
+  
+  routeDecorators.push(routeDecorator);
+  
+  // Add markers for each segment type if segment details are provided
+  if (segmentDetails && segmentDetails.length > 0) {
+    for (let i = 0; i < routeIndices.length - 1; i++) {
+      const startIdx = routeIndices[i];
+      const endIdx = routeIndices[i + 1];
+      const startPoint = allNodes[startIdx];
+      const endPoint = allNodes[endIdx];
+      
+      // Get the midpoint for placing the label
+      const midLat = (startPoint.lat + endPoint.lat) / 2;
+      const midLng = (startPoint.lng + endPoint.lng) / 2;
+      
+      // Add segment information at the midpoint
+      if (segmentDetails[i]) {
+        const { batteryUsed, cost, distance } = segmentDetails[i];
+        
+        const label = L.divIcon({
+          className: 'segment-label',
+          html: `<div class="segment-info">
+                  <span>${distance.toFixed(2)} km</span>
+                  <span>Battery: ${batteryUsed.toFixed(1)}%</span>
+                </div>`,
+          iconSize: [80, 40],
+          iconAnchor: [40, 20]
+        });
+        
+        const marker = L.marker([midLat, midLng], { icon: label, zIndexOffset: 1000 }).addTo(map);
+        routeMarkers.push(marker);
+      }
+    }
+  }
+  
+  // Zoom to fit the route
+  map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
+}
+
+/**
+ * Updates the stats panel with information about the route
+ * @param {Object} stats - Statistics to display
+ */
+function updateStatsPanel(stats) {
+  const statsPanel = document.getElementById('stats-panel');
+  if (!statsPanel) return;
+  
+  // Ensure stats panel is visible
+  statsPanel.style.display = 'block';
+  
+  // Build stats HTML
+  let statsHTML = `
+    <h3>Route Statistics</h3>
+    <ul>
+  `;
+  
+  // Add each stat
+  if (stats.totalDistance) statsHTML += `<li>Distance: ${stats.totalDistance}</li>`;
+  if (stats.routeCost) statsHTML += `<li>Cost: ${stats.routeCost}</li>`;
+  if (stats.batteryUsage) statsHTML += `<li>Battery Used: ${stats.batteryUsage}</li>`;
+  if (stats.recharges !== undefined) statsHTML += `<li>Recharges: ${stats.recharges}</li>`;
+  if (stats.generation) statsHTML += `<li>Solution found at generation: ${stats.generation}</li>`;
+  
+  statsHTML += `</ul>`;
+  
+  // Update the stats panel
+  statsPanel.innerHTML = statsHTML;
 }
 
 // --- Algorithm toggle logic ---
@@ -455,8 +596,47 @@ function runAlgorithm() {
   const algorithm = document.querySelector('.algorithm-toggle').getAttribute('data-selected');
   const batteryCapacity = window.batteryCapacity;
   const maxPayload = window.maxPayload;
-  // Template: to be implemented
-  alert(`Run: ${algorithm === 'ga' ? 'Genetic Algorithm' : 'GNN + PPO'}\nBattery: ${batteryCapacity}\nMax payload: ${maxPayload}`);
+  
+  // Reset any existing route visualizations
+  clearRouteDisplays();
+  
+  // Vérifier si les hubs de départ et d'arrivée sont sélectionnés
+  if (algorithm === 'ga') {
+    // Vérifier si les hubs sont sélectionnés
+    if (selectedStartHub === null || selectedEndHub === null) {
+      alert('Veuillez sélectionner un hub de départ et un hub d\'arrivée.');
+      return;
+    }
+    
+    // Run the genetic algorithm with specified start and end hubs
+    const result = runGeneticAlgorithm(
+      allNodes, 
+      allEdges, 
+      batteryCapacity, 
+      maxPayload, 
+      selectedStartHub, 
+      selectedEndHub
+    );
+    
+    if (result && result.bestRoute) {
+      // Display the best route found by the genetic algorithm
+      displayRoute(result.bestRoute, result.segmentDetails);
+      
+      // Display stats in the stats panel
+      updateStatsPanel({
+        totalDistance: result.totalDistance.toFixed(2) + ' km',
+        routeCost: result.totalCost.toFixed(2),
+        batteryUsage: result.batteryUsage.toFixed(2) + '%',
+        recharges: result.recharges,
+        generation: result.generation
+      });
+    } else {
+      alert('No valid route found. Try adjusting parameters or regenerating points.');
+    }
+  } else {
+    // GNN + PPO not implemented yet
+    alert(`GNN + PPO algorithm not implemented yet.\nBattery: ${batteryCapacity}\nMax payload: ${maxPayload}`);
+  }
 }
 document.getElementById('run-algo').addEventListener('click', runAlgorithm);
 
@@ -576,3 +756,81 @@ map.on('click', function(e) {
     highlightNodeConnections(null);
   }
 });
+
+/**
+ * Remplit les sélecteurs de hub de départ et d'arrivée avec les hubs disponibles
+ */
+function populateHubSelectors() {
+  const startHubSelect = document.getElementById('start-hub-select');
+  const endHubSelect = document.getElementById('end-hub-select');
+  
+  // Réinitialiser les sélecteurs
+  startHubSelect.innerHTML = '<option value="">-- Sélectionner --</option>';
+  endHubSelect.innerHTML = '<option value="">-- Sélectionner --</option>';
+  
+  // Récupérer tous les hubs
+  const hubs = allNodes.filter(node => node.type === 'hubs');
+  
+  // Ajouter les options aux sélecteurs
+  hubs.forEach((hub, index) => {
+    const option = document.createElement('option');
+    option.value = index;
+    option.textContent = hub.id;
+    
+    const optionClone = option.cloneNode(true);
+    
+    startHubSelect.appendChild(option);
+    endHubSelect.appendChild(optionClone);
+  });
+  
+  // Gestionnaires d'événements pour les sélecteurs
+  startHubSelect.addEventListener('change', function() {
+    const selectedIndex = this.value !== "" ? parseInt(this.value) : null;
+    selectedStartHub = selectedIndex !== null ? allNodes.findIndex(n => n.id === hubs[selectedIndex].id) : null;
+    highlightSelectedHubs();
+  });
+  
+  endHubSelect.addEventListener('change', function() {
+    const selectedIndex = this.value !== "" ? parseInt(this.value) : null;
+    selectedEndHub = selectedIndex !== null ? allNodes.findIndex(n => n.id === hubs[selectedIndex].id) : null;
+    highlightSelectedHubs();
+  });
+}
+
+/**
+ * Met en évidence les hubs sélectionnés sur la carte
+ */
+function highlightSelectedHubs() {
+  // Réinitialiser tous les marqueurs de hubs
+  hubsLayer.eachLayer(layer => {
+    if (layer instanceof L.CircleMarker) {
+      const nodeIndex = allNodes.findIndex(n => n.lat === layer.getLatLng().lat && n.lng === layer.getLatLng().lng);
+      
+      if (nodeIndex === selectedStartHub) {
+        // Hub de départ - bordure verte plus épaisse
+        layer.setStyle({
+          color: '#27ae60',
+          weight: 4,
+          fillColor: COLORS.hubs,
+          radius: 10
+        });
+      } else if (nodeIndex === selectedEndHub) {
+        // Hub d'arrivée - bordure bleue plus épaisse
+        layer.setStyle({
+          color: '#3498db',
+          weight: 4,
+          fillColor: COLORS.hubs,
+          radius: 10
+        });
+      } else {
+        // Style normal
+        layer.setStyle({
+          color: COLORS.hubs,
+          fillColor: COLORS.hubs,
+          weight: 2,
+          radius: 8
+        });
+      }
+    }
+  });
+}
