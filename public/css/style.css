@@ -404,7 +404,7 @@ button:disabled {
 .run-btn-icon:focus {
   background: #f3f3f3 !important;
   box-shadow: 0 6px 24px 0 #38b00022, 0 1.5px 6px #0001;
-  transform: translateY(-4px) scale(1.08);
+  transform: translateY(-2px) scale(0.9);
 }
 
 .run-btn-icon:active {
