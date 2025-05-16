@@ -40,13 +40,15 @@ Chaque nœud \(u\) est connecté vers ses \(k=10\) plus proches voisins \emph{so
   G_t = (\mathcal{V}_t,\mathcal{E}_t),\quad \mathcal{E}_t\subset \{\,u\to v\,\}.
 \]
 Chaque arête orientée \(e=(u\!\to\!v)\) porte un coût 
-\[
+\(
   c_{uv}
-  = \underbrace{d_{uv}}_{\text{distance}}
-  + \underbrace{w_{uv}}_{\text{effet du vent}}
-  + \underbrace{\eta_{uv}}_{\text{bruit aléatoire}}
+  = d_{uv} \cdot \Bigl(
+  \underbrace{1}_{\text{base}}
+  \underbrace{- \alpha \cdot w_{uv}}_{\text{effet du vent}}
+  \underbrace{+ \beta \cdot \eta_{uv}}_{\text{bruit aléatoire}}
+  \Bigr)
   \;\in[0,600],
-\]
+\)
 où en général \(c_{uv}\neq c_{vu}\).
 
 \subsection{Attributs nodaux \texorpdfstring{\(X\)}{X}}
