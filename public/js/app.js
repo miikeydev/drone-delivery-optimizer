@@ -11,10 +11,14 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
 
 // Create LayerGroups for different point types
 const hubsLayer = L.layerGroup().addTo(map);
-const chargingLayer = L.layerGroup().addTo(map);
+const chargingLayer = L.layerGroup();
 const deliveryLayer = L.layerGroup().addTo(map);
 const pickupLayer = L.layerGroup().addTo(map);
-const edgesLayer = L.layerGroup().addTo(map);
+const edgesLayer = L.layerGroup();
+
+// Remove chargingLayer and edgesLayer from map by default (since checkboxes are unchecked)
+map.removeLayer(chargingLayer);
+map.removeLayer(edgesLayer);
 
 // Define colors for each category
 const COLORS = {
