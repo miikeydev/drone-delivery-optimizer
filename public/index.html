@@ -22,13 +22,9 @@
       <div class="sidebar-content">
         <!-- Départ & Arrivée section placée en haut -->
         <div class="control-section">
-          <h3>Départ & Arrivée</h3>
+          <h3>Pickup & Delivery</h3>
           <div style="display:flex;gap:10px;align-items:center;">
-            <button id="set-pickup-btn" type="button" style="min-width:120px;">Placer Départ</button>
             <span id="pickup-node-label" style="font-size:13px;color:#2980b9;">–</span>
-          </div>
-          <div style="display:flex;gap:10px;align-items:center;margin-top:6px;">
-            <button id="set-delivery-btn" type="button" style="min-width:120px;">Placer Arrivée</button>
             <span id="delivery-node-label" style="font-size:13px;color:#27ae60;">–</span>
           </div>
         </div>
@@ -189,5 +185,12 @@
   <script src="https://unpkg.com/leaflet-polylinedecorator/dist/leaflet.polylineDecorator.js"></script>
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
   <script src="/js/app.js" type="module"></script>
+  <script>
+    // Déclenche automatiquement les clics sur les boutons "Placer Départ" et "Placer Arrivée" au chargement
+    window.addEventListener('DOMContentLoaded', function() {
+      document.getElementById('set-pickup-btn').click();
+      document.getElementById('set-delivery-btn').click();
+    });
+  </script>
 </body>
 </html>

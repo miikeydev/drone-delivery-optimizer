@@ -438,6 +438,9 @@ async function generateNetwork() {
       const degrees = Math.round((windAngle * 180 / Math.PI) % 360);
       windArrow.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
     }
+
+    // Positionner les pins par défaut
+    placeDefaultPins();
   }
 }
 
@@ -589,9 +592,7 @@ let deliveryMarker = null;
 let pickupNodeId = null;
 let deliveryNodeId = null;
 
-// Récupérer les boutons et labels
-const setPickupBtn = document.getElementById('set-pickup-btn');
-const setDeliveryBtn = document.getElementById('set-delivery-btn');
+// Récupérer les labels (plus de boutons)
 const pickupNodeLabel = document.getElementById('pickup-node-label');
 const deliveryNodeLabel = document.getElementById('delivery-node-label');
 
@@ -609,73 +610,121 @@ function findClosestNode(latlng, nodes) {
   return closestId;
 }
 
-// Supposons que vous avez déjà une liste de nœuds avec id, lat, lng
-// Par exemple :
-/*
-const nodes = [
-  { id: 1, lat: 48.85, lng: 2.35 },
-  { id: 2, lat: 48.86, lng: 2.36 },
-  // ...
-];
-*/
-
-// Ajoutez ceci après l'initialisation de la carte et des nœuds
-setPickupBtn.addEventListener('click', () => {
-  if (pickupMarker) {
-    map.removeLayer(pickupMarker);
+// Positionne les pins sur des points aléatoires après la génération du réseau
+function placeDefaultPins() {
+  // Pickup
+  const pickupNodes = allNodes.filter(n => n.type === 'pickup');
+  if (pickupNodes.length > 0) {
+    const randomPickup = pickupNodes[Math.floor(Math.random() * pickupNodes.length)];
+    if (pickupMarker) map.removeLayer(pickupMarker);
+    pickupMarker = L.marker([randomPickup.lat, randomPickup.lng], {
+      draggable: true,
+      icon: L.icon({
+        iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-orange.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+      })
+    }).addTo(map);
+    pickupNodeId = randomPickup.id;
+    pickupNodeLabel.textContent = pickupNodeId;
+    pickupNodeLabel.style.color = COLORS.pickup;
+    pickupMarker.on('dragend', function(e) {
+      const pos = e.target.getLatLng();
+      pickupNodeId = findClosestNode(pos, pickupNodes);
+      pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
+      pickupNodeLabel.style.color = COLORS.pickup;
+      const node = pickupNodes.find(n => n.id === pickupNodeId);
+      if (node) {
+        pickupMarker.setLatLng([node.lat, node.lng]);
+      }
+    });
+    pickupMarker.fire('dragend');
   }
-  pickupMarker = L.marker(map.getCenter(), {
+
+  // Delivery
+  const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
+  if (deliveryNodes.length > 0) {
+    const randomDelivery = deliveryNodes[Math.floor(Math.random() * deliveryNodes.length)];
+    if (deliveryMarker) map.removeLayer(deliveryMarker);
+    deliveryMarker = L.marker([randomDelivery.lat, randomDelivery.lng], {
+      draggable: true,
+      icon: L.icon({
+        iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-green.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+      })
+    }).addTo(map);
+    deliveryNodeId = randomDelivery.id;
+    deliveryNodeLabel.textContent = deliveryNodeId;
+    deliveryNodeLabel.style.color = COLORS.delivery;
+    deliveryMarker.on('dragend', function(e) {
+      const pos = e.target.getLatLng();
+      deliveryNodeId = findClosestNode(pos, deliveryNodes);
+      deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
+      deliveryNodeLabel.style.color = COLORS.delivery;
+      const node = deliveryNodes.find(n => n.id === deliveryNodeId);
+      if (node) {
+        deliveryMarker.setLatLng([node.lat, node.lng]);
+      }
+    });
+    deliveryMarker.fire('dragend');
+  }
+}
+
+// Remplacer l'écouteur sur pickupLayer et deliveryLayer par le comportement suivant :
+pickupLayer.on('click', (e) => {
+  const pickupNodes = allNodes.filter(n => n.type === 'pickup');
+  if (pickupMarker) map.removeLayer(pickupMarker);
+  const latlng = e.latlng;
+  pickupMarker = L.marker(latlng, {
     draggable: true,
     icon: L.icon({
-      iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-orange.png', // orange pour pickup
+      iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-orange.png',
       iconSize: [25, 41],
       iconAnchor: [12, 41],
       popupAnchor: [1, -34],
     })
   }).addTo(map);
+  pickupNodeId = findClosestNode(latlng, pickupNodes);
+  pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
+  pickupNodeLabel.style.color = COLORS.pickup;
   pickupMarker.on('dragend', function(e) {
     const pos = e.target.getLatLng();
-    const pickupNodes = allNodes.filter(n => n.type === 'pickup');
-    // Trouver le point pickup le plus proche
-    const id = findClosestNode(pos, pickupNodes);
-    pickupNodeId = id;
-    pickupNodeLabel.textContent = id !== null ? id : '–';
-    // Appliquer la couleur orange à l'écriture du label
+    pickupNodeId = findClosestNode(pos, pickupNodes);
+    pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
     pickupNodeLabel.style.color = COLORS.pickup;
-    // Repositionner le marker exactement sur le pickup point sélectionné
-    const node = pickupNodes.find(n => n.id === id);
+    const node = pickupNodes.find(n => n.id === pickupNodeId);
     if (node) {
       pickupMarker.setLatLng([node.lat, node.lng]);
     }
   });
-  // Déclenche dragend pour initialiser la valeur
   pickupMarker.fire('dragend');
 });
 
-setDeliveryBtn.addEventListener('click', () => {
-  if (deliveryMarker) {
-    map.removeLayer(deliveryMarker);
-  }
-  deliveryMarker = L.marker(map.getCenter(), {
+deliveryLayer.on('click', (e) => {
+  const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
+  if (deliveryMarker) map.removeLayer(deliveryMarker);
+  const latlng = e.latlng;
+  deliveryMarker = L.marker(latlng, {
     draggable: true,
     icon: L.icon({
-      iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-green.png', // vert pour delivery
+      iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-green.png',
       iconSize: [25, 41],
       iconAnchor: [12, 41],
       popupAnchor: [1, -34],
     })
   }).addTo(map);
+  deliveryNodeId = findClosestNode(latlng, deliveryNodes);
+  deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
+  deliveryNodeLabel.style.color = COLORS.delivery;
   deliveryMarker.on('dragend', function(e) {
     const pos = e.target.getLatLng();
-    const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
-    // Trouver le point delivery le plus proche
-    const id = findClosestNode(pos, deliveryNodes);
-    deliveryNodeId = id;
-    deliveryNodeLabel.textContent = id !== null ? id : '–';
-    // Appliquer la couleur verte à l'écriture du label
+    deliveryNodeId = findClosestNode(pos, deliveryNodes);
+    deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
     deliveryNodeLabel.style.color = COLORS.delivery;
-    // Repositionner le marker exactement sur le delivery point sélectionné
-    const node = deliveryNodes.find(n => n.id === id);
+    const node = deliveryNodes.find(n => n.id === deliveryNodeId);
     if (node) {
       deliveryMarker.setLatLng([node.lat, node.lng]);
     }
