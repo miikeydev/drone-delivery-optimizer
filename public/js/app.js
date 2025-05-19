@@ -11,10 +11,14 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
 
 // Create LayerGroups for different point types
 const hubsLayer = L.layerGroup().addTo(map);
-const chargingLayer = L.layerGroup().addTo(map);
+const chargingLayer = L.layerGroup();
 const deliveryLayer = L.layerGroup().addTo(map);
 const pickupLayer = L.layerGroup().addTo(map);
-const edgesLayer = L.layerGroup().addTo(map);
+const edgesLayer = L.layerGroup();
+
+// Remove chargingLayer and edgesLayer from map by default (since checkboxes are unchecked)
+map.removeLayer(chargingLayer);
+map.removeLayer(edgesLayer);
 
 // Define colors for each category
 const COLORS = {
@@ -434,6 +438,9 @@ async function generateNetwork() {
       const degrees = Math.round((windAngle * 180 / Math.PI) % 360);
       windArrow.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
     }
+
+    // Positionner les pins par défaut
+    placeDefaultPins();
   }
 }
 
@@ -575,4 +582,152 @@ map.on('click', function(e) {
     highlightedNodeId = null;
     highlightNodeConnections(null);
   }
+});
+
+// === Ajout pour Draggable Map Pins ===
+
+// Variables globales pour les marqueurs et ids sélectionnés
+let pickupMarker = null;
+let deliveryMarker = null;
+let pickupNodeId = null;
+let deliveryNodeId = null;
+
+// Récupérer les labels (plus de boutons)
+const pickupNodeLabel = document.getElementById('pickup-node-label');
+const deliveryNodeLabel = document.getElementById('delivery-node-label');
+
+// Fonction utilitaire pour trouver le nœud le plus proche d'une position
+function findClosestNode(latlng, nodes) {
+  let minDist = Infinity;
+  let closestId = null;
+  nodes.forEach(node => {
+    const dist = map.distance(latlng, [node.lat, node.lng]);
+    if (dist < minDist) {
+      minDist = dist;
+      closestId = node.id;
+    }
+  });
+  return closestId;
+}
+
+// Positionne les pins sur des points aléatoires après la génération du réseau
+function placeDefaultPins() {
+  // Pickup
+  const pickupNodes = allNodes.filter(n => n.type === 'pickup');
+  if (pickupNodes.length > 0) {
+    const randomPickup = pickupNodes[Math.floor(Math.random() * pickupNodes.length)];
+    if (pickupMarker) map.removeLayer(pickupMarker);
+    pickupMarker = L.marker([randomPickup.lat, randomPickup.lng], {
+      draggable: true,
+      icon: L.icon({
+        iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-orange.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+      })
+    }).addTo(map);
+    pickupNodeId = randomPickup.id;
+    pickupNodeLabel.textContent = pickupNodeId;
+    pickupNodeLabel.style.color = COLORS.pickup;
+    pickupMarker.on('dragend', function(e) {
+      const pos = e.target.getLatLng();
+      pickupNodeId = findClosestNode(pos, pickupNodes);
+      pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
+      pickupNodeLabel.style.color = COLORS.pickup;
+      const node = pickupNodes.find(n => n.id === pickupNodeId);
+      if (node) {
+        pickupMarker.setLatLng([node.lat, node.lng]);
+      }
+    });
+    pickupMarker.fire('dragend');
+  }
+
+  // Delivery
+  const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
+  if (deliveryNodes.length > 0) {
+    const randomDelivery = deliveryNodes[Math.floor(Math.random() * deliveryNodes.length)];
+    if (deliveryMarker) map.removeLayer(deliveryMarker);
+    deliveryMarker = L.marker([randomDelivery.lat, randomDelivery.lng], {
+      draggable: true,
+      icon: L.icon({
+        iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-green.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+      })
+    }).addTo(map);
+    deliveryNodeId = randomDelivery.id;
+    deliveryNodeLabel.textContent = deliveryNodeId;
+    deliveryNodeLabel.style.color = COLORS.delivery;
+    deliveryMarker.on('dragend', function(e) {
+      const pos = e.target.getLatLng();
+      deliveryNodeId = findClosestNode(pos, deliveryNodes);
+      deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
+      deliveryNodeLabel.style.color = COLORS.delivery;
+      const node = deliveryNodes.find(n => n.id === deliveryNodeId);
+      if (node) {
+        deliveryMarker.setLatLng([node.lat, node.lng]);
+      }
+    });
+    deliveryMarker.fire('dragend');
+  }
+}
+
+// Remplacer l'écouteur sur pickupLayer et deliveryLayer par le comportement suivant :
+pickupLayer.on('click', (e) => {
+  const pickupNodes = allNodes.filter(n => n.type === 'pickup');
+  if (pickupMarker) map.removeLayer(pickupMarker);
+  const latlng = e.latlng;
+  pickupMarker = L.marker(latlng, {
+    draggable: true,
+    icon: L.icon({
+      iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-orange.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+    })
+  }).addTo(map);
+  pickupNodeId = findClosestNode(latlng, pickupNodes);
+  pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
+  pickupNodeLabel.style.color = COLORS.pickup;
+  pickupMarker.on('dragend', function(e) {
+    const pos = e.target.getLatLng();
+    pickupNodeId = findClosestNode(pos, pickupNodes);
+    pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
+    pickupNodeLabel.style.color = COLORS.pickup;
+    const node = pickupNodes.find(n => n.id === pickupNodeId);
+    if (node) {
+      pickupMarker.setLatLng([node.lat, node.lng]);
+    }
+  });
+  pickupMarker.fire('dragend');
+});
+
+deliveryLayer.on('click', (e) => {
+  const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
+  if (deliveryMarker) map.removeLayer(deliveryMarker);
+  const latlng = e.latlng;
+  deliveryMarker = L.marker(latlng, {
+    draggable: true,
+    icon: L.icon({
+      iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-green.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+    })
+  }).addTo(map);
+  deliveryNodeId = findClosestNode(latlng, deliveryNodes);
+  deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
+  deliveryNodeLabel.style.color = COLORS.delivery;
+  deliveryMarker.on('dragend', function(e) {
+    const pos = e.target.getLatLng();
+    deliveryNodeId = findClosestNode(pos, deliveryNodes);
+    deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
+    deliveryNodeLabel.style.color = COLORS.delivery;
+    const node = deliveryNodes.find(n => n.id === deliveryNodeId);
+    if (node) {
+      deliveryMarker.setLatLng([node.lat, node.lng]);
+    }
+  });
+  deliveryMarker.fire('dragend');
 });

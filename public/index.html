@@ -20,6 +20,17 @@
       </div>
       
       <div class="sidebar-content">
+        <!-- Départ & Arrivée section placée en haut -->
+        <div class="control-section">
+          <h3>Pickup & Delivery</h3>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <span id="pickup-node-label" style="font-size:13px;color:#2980b9;">–</span>
+            <span id="delivery-node-label" style="font-size:13px;color:#27ae60;">–</span>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+        
         <!-- Wind Direction at the top -->
         <div class="control-section">
           <h3>Wind Direction</h3>
@@ -116,12 +127,12 @@
           <h3>Visibility</h3>
           <div class="checkbox-group">
             <div class="checkbox-item">
-              <input type="checkbox" id="toggle-charging" checked/>
+              <input type="checkbox" id="toggle-charging"/>
               <label for="toggle-charging">Charging Stations</label>
             </div>
             
             <div class="checkbox-item">
-              <input type="checkbox" id="toggle-edges" checked/>
+              <input type="checkbox" id="toggle-edges"/>
               <label for="toggle-edges">Edges</label>
             </div>
           </div>
@@ -174,5 +185,12 @@
   <script src="https://unpkg.com/leaflet-polylinedecorator/dist/leaflet.polylineDecorator.js"></script>
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
   <script src="/js/app.js" type="module"></script>
+  <script>
+    // Déclenche automatiquement les clics sur les boutons "Placer Départ" et "Placer Arrivée" au chargement
+    window.addEventListener('DOMContentLoaded', function() {
+      document.getElementById('set-pickup-btn').click();
+      document.getElementById('set-delivery-btn').click();
+    });
+  </script>
 </body>
 </html>
