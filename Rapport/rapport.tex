@@ -31,8 +31,6 @@ Ce rapport présente la modélisation mathématique et l'implémentation d'une m
 
 %-------------------------------------------------------------
 \section{Modèle de réseau de livraison}
-\subsection{Génération des nœuds}
-On génère \(N\) nœuds répartis par Poisson–disc à l'intérieur du polygone \emph{France}, issus du fichier \texttt{metropole-version-simplifiee.geojson}.
 
 \subsection{Graphe orienté des \texorpdfstring{\(k\)}{k}-plus-proches-voisins}
 Chaque nœud \(u\) est connecté vers ses \(k=10\) plus proches voisins \emph{sortants}, formant un graphe orienté 
@@ -51,23 +49,39 @@ Chaque arête orientée \(e=(u\!\to\!v)\) porte un coût
 \)
 où en général \(c_{uv}\neq c_{vu}\).
 
+\subsection*{Implémentation du graphe dans le code}
+Le graphe orienté des \(k\)-plus-proches-voisins est construit dans le code JavaScript (\texttt{app.js}) selon les étapes suivantes :
+\begin{enumerate}
+  \item \textbf{Collecte des nœuds} : tous les points (hubs, charging, delivery, pickup) sont stockés dans un tableau \texttt{allNodes} avec leurs coordonnées et leur type.
+  \item \textbf{Recherche des voisins} : pour chaque nœud \(u\), on calcule la distance de Haversine à tous les autres nœuds, puis on trie ces distances pour sélectionner les \(k=10\) plus proches voisins (hors lui-même).
+  \item \textbf{Création des arêtes orientées} : pour chaque voisin \(v\) sélectionné, une arête orientée \((u \to v)\) est ajoutée à la liste des arêtes.
+  \item \textbf{Calcul du coût d’arête} : chaque arête reçoit un coût $c_{uv}$ qui dépend de la distance, de l’effet du vent (calculé via l’angle entre l’arête et la direction du vent global), et d’un bruit aléatoire. Ceci est réalisé dans la fonction \texttt{annotateEdges}.
+  \item \textbf{Affichage} : le graphe est affiché sur la carte avec des couleurs et épaisseurs d’arêtes reflétant le coût, et chaque arête possède un tooltip interactif.
+\end{enumerate}
+Ce procédé garantit que le graphe utilisé pour l’optimisation correspond exactement à la structure mathématique décrite précédemment.
+
 \subsection{Attributs nodaux \texorpdfstring{\(X\)}{X}}
 Pour chaque sommet \(v\), on définit
 \[
   x_v = \bigl[
-    \underbrace{\text{one-hot}(\text{type})}_{\in\{\,\text{hub},\text{pickup},\text{delivery},\text{charging}\}\, (4)},
-    \;
-    \underbrace{\text{stock/demande}}_{\in\R\, (1)},
+    \underbrace{\mathrm{one\mbox{-}hot}(\mathrm{type})}_{\in\{\,\text{hub},\text{pickup},\text{delivery},\text{charging}\}\, (4)},
     \;
     \underbrace{\lambda_v,\phi_v}_{\text{latitude/longitude}\,(2)},
     \;
-    \underbrace{\cos\omega_v,\sin\omega_v}_{\text{direction du vent}\,(2)}
-  \bigr]\;\in\R^{9}.
+    \underbrace{\text{stock/demande}}_{\in\R\, (1)}
+  \bigr]\;\in\R^{7}.
 \]
 Le terme « stock/demande » reste nul ou constant ici car on part d'une hypothèse de demande unitaire illimitée.
 
 %-------------------------------------------------------------
 \section{Fonction de coût généralisée}
+\subsection{Effet du vent sur les coûts d'arêtes}
+Le vent est considéré comme un paramètre global (même direction partout), et son effet est calculé au niveau de chaque arête orientée \((u\to v)\) via:
+\[
+  \text{windEffect}_{uv} = \cos(\phi_{uv} - \text{windAngle})
+\]
+où \(\phi_{uv}\) est l'angle de la direction \(u\to v\) et \(\text{windAngle}\) est la direction globale du vent. Cette valeur est ensuite utilisée dans le calcul du coût de l'arête présenté précédemment.
+
 \subsection{Consommation de batterie par arête}
 Pour une arête \(e_i\) de coût \(c_i\), la batterie consommée est
 \[
@@ -134,83 +148,135 @@ Le chromosome est la concaténation, en omettant les doublons consécutifs.
 
 %-------------------------------------------------------------
 \subsection{2. PPO + GNN (RL)}
-\label{subsec:RL_constraints}
+\label{sec:rl_gnn}
 
-\paragraph{Intégration dans l'environnement}  
-Au sein de l'environnement de RL :
+\paragraph{Intégration des contraintes (mise à jour)}  
 \begin{itemize}
-  \item \emph{État initial virtuel} : l’agent reçoit un état “départ” non relié.
-  \item \emph{Pas 0} : action spéciale 
+  \item \emph{Pas 0 (téléportation)} : comme avant,  
     \[
-      a_0 = \bigl(\text{téléportation vers un hub }H_i\bigr),
-      \quad \text{coût}=c_{\text{pickup}\to H_i}.
+      a_0 = (\text{téléportation vers hub }H_i),\quad H_i\sim\{H\mid d(\text{pickup},H)\le d_{\max}\}.
     \]
-    Ce hub \(H_i\) est tiré aléatoirement parmi ceux \(\le d_{\max}\) du point de pickup.
-  \item \emph{Fin de tournée} : après desserte de \(D\) et \(L\), l’agent choisit
+  \item \emph{Étapes intermédiaires} (\(1\le t \le T\)) : on suit une arête \((v_t\to v_{t+1})\).
+  \item \emph{Termination} : l’épisode se termine dès que  
     \[
-      a_T = \bigl(\text{téléportation vers hub }H_j\bigr),
-      \quad \text{coût}=c_{v_T\to H_j}.
+      \text{\texttt{picked}}=\text{\texttt{delivered}}=1
+      \quad\text{et}\quad
+      v_t\in\mathcal{H}
+      \quad\text{ou}\quad
+      t=T_{\max}.
     \]
-  \item \emph{Termination} : l’épisode se termine dès que tous les flags \(\{\text{picked},\text{delivered}\}\) sont à 1 et qu’un hub est rejoint.
 \end{itemize}
 
-\paragraph{Récompense instantanée mise à jour}
-Pour tout pas \(t\),
+L’agent doit naturellement rejoindre un hub après avoir desservi tous les points. Cela rend la terminaison plus réaliste et évite d’introduire une action artificielle de retour. Un critère temporel optionnel (\(T_{\max}\)) permet aussi de forcer la fin de l’épisode si besoin.
+
+\subsection{Encodage de l’état \(s_t\)}
+L’état est un tuple 
 \[
-  r_t 
-  = -\,c_t
-    - \lambda\,\bigl[\max(0,b_t - \Delta b_t)\bigr]^2
-    - \mu\,\mathbb1_{\{\text{recharge}\}}
-    - \kappa\,\mathbb1_{\{\text{téléportation non valide}\}},
+  s_t = \bigl(A_t,\,X_t,\,E_t,\,b_t,\,p_t,\,v_t\bigr),
 \]
-où \(\kappa\gg1\) pénalise tout téléport illégal hors hub.
+\begin{itemize}
+  \item \(A_t\in\{0,1\}^{N\times N}\) : matrice d’adjacence orientée du graphe,
+  \item \(X_t\in\R^{N\times d_0}\) : matrice des \emph{features nodales},   
+    \[
+      x_v = [\,\text{one-hot(type)},\ \lambda_v,\ \phi_v,\ \text{stock/demande}\,]
+    \]
+    où :
+    \begin{itemize}
+      \item \(\text{one-hot(type)}\) : vecteur indicateur (hub, pickup, delivery, charging), dimension 4,
+      \item \(\lambda_v\) : latitude,
+      \item \(\phi_v\) : longitude,
+      \item \(\text{stock/demande}\) : valeur de stock ou demande (ici constante).
+    \end{itemize}
+  \item \(E_t\in\R^{|\mathcal E|\times f_e}\) : matrice des \emph{features d’arête},  
+    pour chaque \(e=(u\to v)\) on encode  
+    \[
+      e_{uv}=\bigl[d_{uv},\,\cos(\phi_{uv}-\omega),\,\eta_{uv}\bigr],
+    \]
+  \item \(b_t\in\R\) : batterie restante,
+  \item \(p_t\in\mathbb{N}\) : nombre de colis à bord,
+  \item \(v_t\in\{1,\dots,N\}\) : index du nœud courant.
+\end{itemize}
 
-%-------------------------------------------------------------
-\section{Formulation RL et Architecture du GNN}
-\subsection{État \texorpdfstring{\(\displaystyle s_t=(A_t,X_t,b_t,p_t,v_t)\)}{s_t=(A_t,X_t,b_t,p_t,v_t)}}
-
-\subsection{Action \texorpdfstring{\(\displaystyle a_t\in\{1,\dots,K\}\)}{a_t in {1,...,K}}}  
-Choix d’une arête orientée sortante ou d’une action spéciale de téléportation.
-
-\subsection{GNN – Message Passing}
+\subsection{Architecture du GNN}
+On utilise un schéma \emph{Message Passing} enrichi par les features d’arête (Edge-conditioned GraphSAGE) :
 \[
   H^{(\ell+1)} 
-  = \sigma\bigl(W_1^{(\ell)}H^{(\ell)} + W_2^{(\ell)}A_t\,H^{(\ell)}\bigr),
-  \quad 
-  H^{(0)}=X_t.
+  = \sigma\Bigl(
+    W_1^{(\ell)}H^{(\ell)}
+    \;+\;
+    W_2^{(\ell)}\,\sum_{u\to v}\!\phi_\theta\bigl(e_{uv}\bigr)\,H_u^{(\ell)}
+  \Bigr),
+  \quad
+  H^{(0)} = X_t,
+\]
+avec \(\phi_\theta\) un réseau MLP qui transforme la feature d’arête \(e_{uv}\) en un poids d’agrégation.  
+
+\subsection{Readout et têtes acteur–critique}
+Après \(L\) couches GNN, on agrége par 
+\[
+  g_t = \frac1{N}\sum_{v=1}^N H_v^{(L)} \in \R^d.
+\]
+\paragraph{Politique (acteur)}  
+\[
+  \pi_\theta(a_t\mid s_t)
+  = \mathrm{Softmax}\Bigl(W_\pi\,g_t\;+\;U_\pi\,[b_t,p_t]\Bigr).
+\]
+\paragraph{Critique}  
+\[
+  V_\psi(s_t)
+  = w_v^\top g_t \;+\; u_v^\top [b_t,p_t].
 \]
 
-\subsection{Readout global et tête acteur–critique}
+\subsection{Récompense instantanée}
+Pour tout pas \(t\),
 \[
-  g_t = \frac1{|\mathcal V_t|}\sum_v H_v^{(L)},
-\quad
-\pi_\theta(a_t\mid s_t)=\mathrm{Softmax}(W_\pi g_t + U_\pi[b_t,p_t]),
-\quad
-V_\psi(s_t)=w_v^\top g_t + u_v^\top[b_t,p_t].
+  r_t
+  = -c_t
+  - \lambda\,\Bigl[\max\bigl(0,\,b_t - \Delta b_t\bigr)\Bigr]^2
+  - \mu\,\mathbb1_{\{\text{recharge}\}}
+  - \kappa\,\mathbb1_{\{\text{téléport. hors hub}\}},
 \]
+avec \(\kappa\gg1\) pour interdire toute téléportation hors hub.
 
 %-------------------------------------------------------------
 \section{Algorithme PPO}
-\subsection{Avantage (GAE-\texorpdfstring{\(\lambda\)}{\lambda})}
+\subsection{Avantage (GAE-\(\lambda\))}
 \[
   \hat A_t 
-  = \sum_{k\ge0}(\gamma\lambda)^k\bigl(r_{t+k}+\gamma V_\psi(s_{t+k+1})-V_\psi(s_{t+k})\bigr).
+  = \sum_{k\ge0}(\gamma\lambda)^k
+    \Bigl(r_{t+k} 
+    + \gamma V_\psi(s_{t+k+1})
+    - V_\psi(s_{t+k})\Bigr).
 \]
-
 \subsection{Perte « clipped »}
 \[
   \mathcal L
-  = \E_t\Bigl[\min\bigl(r_t\hat A_t,\;\mathrm{clip}(r_t,1\pm\varepsilon)\hat A_t\bigr)\Bigr]
-    +c_1\|R_t-V_\psi\|^2 - c_2\,\mathcal H[\pi_\theta].
+  = \E_t\Bigl[
+      \min\bigl(r_t(\theta)\,\hat A_t,\;
+                 \mathrm{clip}(r_t(\theta),1\pm\varepsilon)\,\hat A_t
+           \bigr)
+    \Bigr]
+  + c_1\,\|R_t - V_\psi\|^2
+  - c_2\,\mathcal H\bigl[\pi_\theta\bigr].
 \]
 
-%-------------------------------------------------------------
-\section{Protocole d'entraînement}
+\subsection{Pipeline d’entraînement}
+\begin{enumerate}
+  \item \textbf{Collecte de trajectoires} sur \(N\) environnements parallèles.
+  \item \textbf{Calcul des avantages} \(\{\hat A_t\}\) via GAE-\(\lambda\).
+  \item \textbf{Optimisation conjointe} des paramètres \(\theta,\psi\) sur plusieurs epochs :
+    \[
+      \theta\leftarrow\theta-\eta\,\nabla_\theta\mathcal{L},\quad
+      \psi\leftarrow\psi-\eta\,\nabla_\psi\bigl\|R_t - V_\psi\bigr\|^2.
+    \]
+  \item Boucler jusqu’à convergence.
+\end{enumerate}
+
+\paragraph{Hyperparamètres typiques}
 \begin{itemize}
-  \item \(N=8\) environnements parallèles.
   \item \(\gamma=0.99,\ \lambda_{\text{GAE}}=0.95,\ \varepsilon=0.2\).
-  \item GNN : 2 couches, dimension 128, ReLU, dropout 0.1.
-  \item Adam, LR \(3\times10^{-4}\), FP16 sur RTX~4050.
+  \item GNN : \(L=2\) couches, \(d=128\), ReLU, dropout \(0.1\).
+  \item Optimiseur : Adam, LR \(3\times10^{-4}\), FP16 sur GPU.
 \end{itemize}
 
 %-------------------------------------------------------------
