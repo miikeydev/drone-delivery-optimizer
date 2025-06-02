@@ -1,28 +1,34 @@
 \contentsline {section}{\numberline {1}Introduction}{2}{section.1}%
 \contentsline {section}{\numberline {2}Modèle de réseau de livraison}{2}{section.2}%
 \contentsline {subsection}{\numberline {2.1}Graphe orienté des \(k\)-plus-proches-voisins}{2}{subsection.2.1}%
-\contentsline {subsection}{\numberline {2.2}Attributs nodaux \(X\)}{2}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.2}Attributs nodaux \(X\)}{3}{subsection.2.2}%
 \contentsline {section}{\numberline {3}Fonction de coût généralisée}{3}{section.3}%
 \contentsline {subsection}{\numberline {3.1}Effet du vent sur les coûts d'arêtes}{3}{subsection.3.1}%
 \contentsline {subsection}{\numberline {3.2}Consommation de batterie par arête}{3}{subsection.3.2}%
-\contentsline {subsection}{\numberline {3.3}Objectif global d'une tournée \(E\)}{3}{subsection.3.3}%
-\contentsline {section}{\numberline {4}Contraintes de début et fin de tournée}{3}{section.4}%
-\contentsline {subsection}{\numberline {4.1}1. Algorithme génétique (GA)}{3}{subsection.4.1}%
-\contentsline {paragraph}{But}{3}{section*.3}%
-\contentsline {paragraph}{Initialisation}{3}{section*.4}%
-\contentsline {paragraph}{Réparation (repair)}{4}{section*.5}%
-\contentsline {paragraph}{Mutation spécifique}{4}{section*.6}%
+\contentsline {subsection}{\numberline {3.3}Objectif global d'une tournée \(E\)}{4}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Contraintes de début et fin de tournée}{4}{section.4}%
+\contentsline {subsection}{\numberline {4.1}1. Algorithme génétique (GA)}{4}{subsection.4.1}%
+\contentsline {paragraph}{But}{4}{section*.4}%
+\contentsline {paragraph}{Initialisation}{4}{section*.5}%
+\contentsline {paragraph}{Réparation (repair)}{4}{section*.6}%
+\contentsline {paragraph}{Mutation spécifique}{4}{section*.7}%
 \contentsline {subsection}{\numberline {4.2}2. PPO + GNN (RL)}{4}{subsection.4.2}%
-\contentsline {paragraph}{Intégration des contraintes (mise à jour)}{4}{section*.7}%
-\contentsline {subsection}{\numberline {4.3}Encodage de l’état \(s_t\)}{4}{subsection.4.3}%
-\contentsline {subsection}{\numberline {4.4}Architecture du GNN}{5}{subsection.4.4}%
-\contentsline {subsection}{\numberline {4.5}Readout et têtes acteur–critique}{5}{subsection.4.5}%
-\contentsline {paragraph}{Politique (acteur)}{5}{section*.8}%
-\contentsline {paragraph}{Critique}{5}{section*.9}%
-\contentsline {subsection}{\numberline {4.6}Récompense instantanée}{5}{subsection.4.6}%
-\contentsline {section}{\numberline {5}Algorithme PPO}{5}{section.5}%
-\contentsline {subsection}{\numberline {5.1}Avantage (GAE-\(\lambda \))}{5}{subsection.5.1}%
-\contentsline {subsection}{\numberline {5.2}Perte « clipped »}{5}{subsection.5.2}%
-\contentsline {subsection}{\numberline {5.3}Pipeline d’entraînement}{5}{subsection.5.3}%
-\contentsline {paragraph}{Hyperparamètres typiques}{6}{section*.10}%
-\contentsline {section}{\numberline {6}Conclusion}{6}{section.6}%
+\contentsline {subsection}{\numberline {4.3}Modélisation RL détaillée}{4}{subsection.4.3}%
+\contentsline {paragraph}{Cadre MDP.}{4}{section*.8}%
+\contentsline {paragraph}{Masque d'action dynamique.}{5}{section*.9}%
+\contentsline {paragraph}{Réseau de politique.}{5}{section*.10}%
+\contentsline {paragraph}{Pseudo-code environnement (Gym).}{5}{lstlisting.-1}%
+\contentsline {paragraph}{Pipeline d'entraînement.}{6}{section*.12}%
+\contentsline {paragraph}{Intégration des contraintes (mise à jour)}{6}{section*.13}%
+\contentsline {subsection}{\numberline {4.4}Encodage de l'état \(s_t\)}{6}{subsection.4.4}%
+\contentsline {subsection}{\numberline {4.5}Architecture du GNN}{7}{subsection.4.5}%
+\contentsline {subsection}{\numberline {4.6}Readout et têtes acteur–critique}{7}{subsection.4.6}%
+\contentsline {paragraph}{Politique (acteur)}{7}{section*.14}%
+\contentsline {paragraph}{Critique}{7}{section*.15}%
+\contentsline {subsection}{\numberline {4.7}Récompense instantanée}{7}{subsection.4.7}%
+\contentsline {section}{\numberline {5}Algorithme PPO}{7}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Avantage (GAE-\(\lambda \))}{7}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Perte « clipped »}{7}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Pipeline d'entraînement}{8}{subsection.5.3}%
+\contentsline {paragraph}{Hyperparamètres typiques}{8}{section*.16}%
+\contentsline {section}{\numberline {6}Conclusion}{8}{section.6}%
