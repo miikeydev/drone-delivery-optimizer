@@ -24,8 +24,11 @@
         <div class="control-section">
           <h3>Pickup & Delivery</h3>
           <div style="display:flex;gap:10px;align-items:center;">
-            <span id="pickup-node-label" style="font-size:13px;color:#2980b9;">–</span>
+            <span id="pickup-node-label" style="font-size:13px;color:#f39c12;">–</span>
             <span id="delivery-node-label" style="font-size:13px;color:#27ae60;">–</span>
+          </div>
+          <div style="font-size:11px;color:#666;margin-top:4px;">
+            Drag pins or click on pickup/delivery points to select
           </div>
         </div>
 
@@ -54,12 +57,12 @@
         <div class="control-section">
           <h3>Algorithme</h3>
           <div class="algo-row">
-            <div class="algorithm-toggle" data-selected="ga">
+            <div class="algorithm-toggle" data-selected="ppo">
               <div class="algorithm-selector"></div>
-              <div class="algorithm-option active" data-value="ga">GA</div>
-              <div class="algorithm-option" data-value="gnn">GNN + PPO</div>
+              <div class="algorithm-option" data-value="ga">GA</div>
+              <div class="algorithm-option active" data-value="ppo">PPO</div>
             </div>
-            <span id="run-algo" class="run-btn-icon" title="Run">
+            <span id="run-algo" class="run-btn-icon" title="Run Algorithm">
               <svg viewBox="0 0 24 24" width="26" height="26" style="vertical-align:middle;">
                 <circle cx="12" cy="12" r="11" fill="none"/>
                 <polygon points="10,8 17,12 10,16" fill="#111"/>
@@ -185,12 +188,5 @@
   <script src="https://unpkg.com/leaflet-polylinedecorator/dist/leaflet.polylineDecorator.js"></script>
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
   <script src="/js/app.js" type="module"></script>
-  <script>
-    // Déclenche automatiquement les clics sur les boutons "Placer Départ" et "Placer Arrivée" au chargement
-    window.addEventListener('DOMContentLoaded', function() {
-      document.getElementById('set-pickup-btn').click();
-      document.getElementById('set-delivery-btn').click();
-    });
-  </script>
 </body>
 </html>

@@ -60,66 +60,63 @@ app.get('/api/osrm-status', (req, res) => {
 app.post('/api/run-algorithm', (req, res) => {
   const { algorithm, batteryCapacity, maxPayload, startNode, endNode } = req.body;
   
-  console.log(`Executing ${algorithm} algorithm with battery=${batteryCapacity}, payload=${maxPayload}`);
-  console.log(`Route: ${startNode} -> ${endNode}`);
+  console.log(`🚁 Executing ${algorithm} algorithm`);
+  console.log(`📊 Parameters: battery=${batteryCapacity}, payload=${maxPayload}`);
+  console.log(`🗺️ Route: ${startNode} -> ${endNode}`);
   
-  if (algorithm === 'ppo') {
-    // PPO algorithm execution
+  if (algorithm === 'ppo' || algorithm === 'gnn') {
+    // PPO algorithm execution with live inference
     const { spawn } = require('child_process');
     const path = require('path');
     
-    const modelPath = path.join(__dirname, 'python', 'models', 'drone_ppo.zip');
+    const modelPath = path.join(__dirname, 'models', 'drone_ppo_full_random_20250605_163145_final.zip');
     const graphPath = path.join(__dirname, 'data', 'graph.json');
     
-    // Check if model exists, if not, start training
+    console.log(`📂 Model path: ${modelPath}`);
+    console.log(`📂 Graph path: ${graphPath}`);
+    
+    // Check if model exists
     const fs = require('fs');
     if (!fs.existsSync(modelPath)) {
-      console.log('PPO model not found, starting training...');
-      
-      // Start training process
-      const trainProcess = spawn('python', [
-        path.join(__dirname, 'python', 'train_simpleppo.py'),
-        '--graph', graphPath,
-        '--timesteps', '1000000',  // Reduced for faster training
-        '--save-path', path.join(__dirname, 'python', 'models', 'drone_ppo')
-      ], {
-        cwd: __dirname
-      });
-      
-      trainProcess.stdout.on('data', (data) => {
-        console.log(`Training: ${data}`);
-      });
-      
-      trainProcess.stderr.on('data', (data) => {
-        console.error(`Training error: ${data}`);
-      });
-      
-      trainProcess.on('close', (code) => {
-        console.log(`Training finished with code ${code}`);
-      });
-      
-      // Return training status
-      res.json({
-        status: 'training',
-        message: 'PPO model training started. This may take several minutes.',
+      console.log('❌ PPO model not found');
+      res.status(404).json({
+        status: 'error',
+        message: 'PPO model not found. Please train a model first.',
         route: [],
-        stats: {
-          distance: 0,
-          time: 0,
-          batteryUsed: 0
-        }
+        route_names: [],
+        stats: { success: false }
       });
-      
       return;
+    } else {
+      console.log('✅ Model file exists');
+    }
+
+    // Check if graph exists
+    if (!fs.existsSync(graphPath)) {
+      console.log('❌ Graph data not found');
+      res.status(404).json({
+        status: 'error', 
+        message: 'Graph data not found. Please generate network first.',
+        route: [],
+        route_names: [],
+        stats: { success: false }
+      });
+      return;
+    } else {
+      console.log('✅ Graph file exists');
     }
     
-    // Model exists, run evaluation
-    const evalProcess = spawn('python', [
-      path.join(__dirname, 'python', 'eval_simpleppo.py'),
-      '--graph', graphPath,
+    // Run live inference
+    console.log('🚀 Starting inference process...');
+    const inferenceProcess = spawn('python', [
+      path.join(__dirname, 'python', 'live_inference.py'),
       '--model', modelPath,
-      '--start', startNode || 'Hub 1',
-      '--end', endNode || 'Delivery 1'
+      '--graph', graphPath,
+      '--pickup', startNode || 'Pickup 1',
+      '--delivery', endNode || 'Delivery 1', 
+      '--battery', batteryCapacity.toString(),
+      '--payload', maxPayload.toString()
+      // Removed --quiet to see all logs
     ], {
       cwd: __dirname
     });
@@ -127,48 +124,101 @@ app.post('/api/run-algorithm', (req, res) => {
     let outputData = '';
     let errorData = '';
     
-    evalProcess.stdout.on('data', (data) => {
-      outputData += data.toString();
+    inferenceProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      console.log(`[Python STDOUT]: ${output}`);
+      outputData += output;
     });
     
-    evalProcess.stderr.on('data', (data) => {
-      errorData += data.toString();
-      console.error(`PPO eval error: ${data}`);
+    inferenceProcess.stderr.on('data', (data) => {
+      const error = data.toString();
+      console.error(`[Python STDERR]: ${error}`);
+      errorData += error;
     });
     
-    evalProcess.on('close', (code) => {
+    inferenceProcess.on('close', (code) => {
+      console.log(`🏁 Python process finished with code: ${code}`);
+      console.log(`📊 Total output length: ${outputData.length} chars`);
+      
       if (code === 0) {
         try {
-          const result = JSON.parse(outputData);
-          res.json(result);
+          // Extract JSON from output (after "JSON OUTPUT:" line)
+          const jsonStart = outputData.indexOf('JSON OUTPUT:');
+          if (jsonStart !== -1) {
+            const jsonStr = outputData.substring(jsonStart + 'JSON OUTPUT:'.length).trim();
+            console.log(`📄 Extracted JSON (${jsonStr.length} chars): ${jsonStr.substring(0, 200)}...`);
+            
+            const result = JSON.parse(jsonStr);
+            
+            // Format for frontend
+            const response = {
+              status: result.status,
+              message: result.message,
+              route: result.route_names || [],
+              route_indices: result.route || [],
+              actions: result.actions || [],
+              rewards: result.rewards || [],
+              costs: result.costs || [],
+              battery_history: result.battery_history || [],
+              stats: {
+                success: result.stats.success || false,
+                distance: result.stats.total_cost || 0,
+                batteryUsed: result.stats.battery_used || 0,
+                steps: result.stats.total_steps || 0,
+                recharges: result.stats.recharges || 0,
+                termination_reason: result.stats.termination_reason || 'unknown'
+              },
+              graph_info: result.graph_info || {}
+            };
+            
+            console.log(`✅ PPO inference completed: ${response.stats.success ? 'SUCCESS' : 'FAILED'}`);
+            console.log(`📊 Route: ${response.route.join(' → ')}`);
+            console.log(`📊 Steps: ${response.stats.steps}, Battery: ${response.stats.batteryUsed}%`);
+            
+            res.json(response);
+          } else {
+            throw new Error('No JSON output found in Python output');
+          }
         } catch (e) {
-          console.error('Failed to parse PPO output:', e);
+          console.error('❌ Failed to parse PPO output:', e);
+          console.error('Raw output:', outputData);
           res.status(500).json({
             status: 'error',
-            message: 'Failed to parse PPO output',
+            message: `Failed to parse PPO output: ${e.message}`,
             route: [],
-            stats: { distance: 0, time: 0, batteryUsed: 0 }
+            stats: { success: false, distance: 0, batteryUsed: 0 },
+            debug: {
+              rawOutput: outputData.substring(0, 1000),
+              error: e.message
+            }
           });
         }
       } else {
-        console.error(`PPO evaluation failed with code ${code}`);
+        console.error(`❌ PPO inference failed with code ${code}`);
+        console.error('Error output:', errorData);
         res.status(500).json({
           status: 'error',
-          message: `PPO evaluation failed: ${errorData}`,
+          message: `PPO inference failed with code ${code}: ${errorData}`,
           route: [],
-          stats: { distance: 0, time: 0, batteryUsed: 0 }
+          stats: { success: false, distance: 0, batteryUsed: 0 },
+          debug: {
+            exitCode: code,
+            stderr: errorData,
+            stdout: outputData
+          }
         });
       }
     });
     
     // Set timeout
     setTimeout(() => {
-      evalProcess.kill();
+      console.log('⏰ PPO inference timeout - killing process');
+      inferenceProcess.kill();
       res.status(408).json({
         status: 'timeout',
-        message: 'PPO evaluation timed out',
+        message: 'PPO inference timed out after 30 seconds',
         route: [],
-        stats: { distance: 0, time: 0, batteryUsed: 0 }
+        stats: { success: false, distance: 0, batteryUsed: 0 }
       });
     }, 30000); // 30 second timeout
     
@@ -178,11 +228,12 @@ app.post('/api/run-algorithm', (req, res) => {
       res.json({ 
         status: 'success', 
         message: `${algorithm} algorithm executed successfully`,
-        route: [],
+        route: ['Hub 1', 'Pickup 3', 'Delivery 5', 'Hub 1'],
         stats: {
+          success: true,
           distance: 150.5,
-          time: 45.2,
-          batteryUsed: batteryCapacity * 0.8
+          batteryUsed: batteryCapacity * 0.8,
+          steps: 12
         }
       });
     }, 1500);

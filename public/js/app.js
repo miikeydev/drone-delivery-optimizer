@@ -498,9 +498,17 @@ function runAlgorithm() {
   
   // Show loading state
   const runButton = document.getElementById('run-algo');
-  const originalText = runButton.textContent;
-  runButton.textContent = 'Running...';
+  const originalText = runButton.innerHTML;
+  runButton.innerHTML = `
+    <svg viewBox="0 0 24 24" width="26" height="26" style="vertical-align:middle;animation:spin 1s linear infinite;">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="#666" stroke-width="2"/>
+      <path d="M22 12A10 10 0 0 0 12 2" stroke="#333" stroke-width="2" fill="none"/>
+    </svg>
+  `;
   runButton.disabled = true;
+  
+  // Clear any existing route visualization
+  clearRouteVisualization();
   
   // Send request to server
   fetch('/api/run-algorithm', {
@@ -518,12 +526,23 @@ function runAlgorithm() {
   .then(data => {
     console.log('Algorithm result:', data);
     
-    if (data.status === 'success') {
-      alert(`Success!\nRoute: ${data.route.join(' → ')}\nDistance: ${data.stats.distance} km\nBattery used: ${data.stats.batteryUsed}%`);
+    if (data.status === 'success' || data.stats?.success) {
+      // Show success message
+      const routeStr = data.route.join(' → ');
+      const message = `🎉 Success!\n\nRoute: ${routeStr}\nSteps: ${data.stats.steps}\nDistance: ${data.stats.distance.toFixed(1)} km\nBattery used: ${data.stats.batteryUsed.toFixed(1)}%\nRecharges: ${data.stats.recharges || 0}`;
+      
+      alert(message);
+      
+      // Visualize route on map
+      if (data.route_indices && data.route_indices.length > 0) {
+        visualizeRoute(data.route_indices, data.battery_history || []);
+      }
+      
     } else if (data.status === 'training') {
       alert('PPO model is training. This may take several minutes. Please try again later.');
     } else {
-      alert(`Algorithm failed: ${data.message}`);
+      const failureReason = data.stats?.termination_reason || 'unknown';
+      alert(`❌ Mission Failed!\n\nReason: ${failureReason}\nSteps taken: ${data.stats?.steps || 0}\nBattery remaining: ${(100 - (data.stats?.batteryUsed || 0)).toFixed(1)}%`);
     }
   })
   .catch(error => {
@@ -532,11 +551,125 @@ function runAlgorithm() {
   })
   .finally(() => {
     // Restore button state
-    runButton.textContent = originalText;
+    runButton.innerHTML = originalText;
     runButton.disabled = false;
   });
 }
-document.getElementById('run-algo').addEventListener('click', runAlgorithm);
+
+// Route visualization functions
+let routeLayer = null;
+
+function clearRouteVisualization() {
+  if (routeLayer) {
+    map.removeLayer(routeLayer);
+    routeLayer = null;
+  }
+}
+
+function visualizeRoute(routeIndices, batteryHistory = []) {
+  // Clear any existing route
+  clearRouteVisualization();
+  
+  if (!allNodes || routeIndices.length < 2) {
+    console.warn('Cannot visualize route: insufficient data');
+    return;
+  }
+  
+  // Create new layer group for route
+  routeLayer = L.layerGroup().addTo(map);
+  
+  // Draw route path
+  const routeCoords = routeIndices.map(idx => {
+    if (idx < allNodes.length) {
+      return [allNodes[idx].lat, allNodes[idx].lng];
+    }
+    return null;
+  }).filter(coord => coord !== null);
+  
+  if (routeCoords.length > 1) {
+    // Draw the main route line
+    const routeLine = L.polyline(routeCoords, {
+      color: '#ff6b35',
+      weight: 6,
+      opacity: 0.8,
+      dashArray: '10, 5'
+    }).addTo(routeLayer);
+    
+    // Add arrows to show direction
+    const decorator = L.polylineDecorator(routeLine, {
+      patterns: [
+        {
+          offset: 25,
+          repeat: 50,
+          symbol: L.Symbol.arrowHead({
+            pixelSize: 12,
+            polygon: true,
+            pathOptions: { color: '#ff6b35', fillOpacity: 0.8 }
+          })
+        }
+      ]
+    }).addTo(routeLayer);
+    
+    // Add numbered markers for each step
+    routeIndices.forEach((nodeIdx, stepIdx) => {
+      if (nodeIdx < allNodes.length) {
+        const node = allNodes[nodeIdx];
+        const battery = batteryHistory[stepIdx] || 100;
+        
+        // Color based on battery level
+        let markerColor = '#4CAF50'; // Green
+        if (battery < 30) markerColor = '#F44336'; // Red
+        else if (battery < 60) markerColor = '#FF9800'; // Orange
+        
+        const stepMarker = L.circleMarker([node.lat, node.lng], {
+          radius: 8,
+          fillColor: markerColor,
+          color: '#fff',
+          weight: 2,
+          fillOpacity: 0.9
+        }).addTo(routeLayer);
+        
+        // Add popup with step info
+        stepMarker.bindPopup(`
+          <b>Step ${stepIdx + 1}</b><br>
+          Node: ${node.id}<br>
+          Type: ${node.type}<br>
+          Battery: ${battery.toFixed(1)}%
+        `);
+        
+        // Add step number label
+        const stepLabel = L.divIcon({
+          html: `<div style="color: white; font-weight: bold; font-size: 10px; text-align: center; line-height: 16px;">${stepIdx + 1}</div>`,
+          className: 'step-number-label',
+          iconSize: [16, 16]
+        });
+        
+        L.marker([node.lat, node.lng], { icon: stepLabel }).addTo(routeLayer);
+      }
+    });
+    
+    // Zoom to route bounds
+    const group = new L.featureGroup(routeLayer.getLayers());
+    map.fitBounds(group.getBounds().pad(0.1));
+    
+    console.log(`Route visualized: ${routeIndices.length} steps`);
+  }
+}
+
+// Add CSS for route visualization
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  
+  .step-number-label {
+    background: none !important;
+    border: none !important;
+  }
+`;
+document.head.appendChild(style);
 
 // --- Battery slider logic ---
 const batterySlider = document.getElementById('battery-slider');
@@ -654,6 +787,12 @@ map.on('click', function(e) {
     highlightNodeConnections(null);
   }
 });
+
+// --- Run button event listener ---
+const runButton = document.getElementById('run-algo');
+if (runButton) {
+  runButton.addEventListener('click', runAlgorithm);
+}
 
 // === Ajout pour Draggable Map Pins ===
 
