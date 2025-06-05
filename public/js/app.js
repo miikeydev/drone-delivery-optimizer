@@ -425,6 +425,33 @@ async function generateNetwork() {
     // Add wind and cost effects
     allEdges = annotateEdges(rawEdges, allNodes, windAngle, alpha, beta);
     
+    // Export graph data for PPO training
+    const graphData = {
+      nodes: allNodes.map((node, index) => ({
+        id: node.id,
+        type: node.type,
+        lat: node.lat,
+        lng: node.lng,
+        index: index
+      })),
+      edges: allEdges.map(edge => ({
+        u: edge.source,
+        v: edge.target,
+        dist: edge.distance,
+        cost: edge.cost
+      }))
+    };
+    
+    // Save graph data to server
+    fetch('/api/save-graph', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(graphData)
+    }).catch(err => console.log('Graph save failed:', err));
+    
+    // Also log to console for debugging
+    console.log('Graph exported:', graphData.nodes.length, 'nodes,', graphData.edges.length, 'edges');
+    
     // Draw the graph
     drawGraph(allNodes, allEdges);
 
@@ -462,8 +489,52 @@ function runAlgorithm() {
   const algorithm = document.querySelector('.algorithm-toggle').getAttribute('data-selected');
   const batteryCapacity = window.batteryCapacity;
   const maxPayload = window.maxPayload;
-  // Template: to be implemented
-  alert(`Run: ${algorithm === 'ga' ? 'Genetic Algorithm' : 'GNN + PPO'}\nBattery: ${batteryCapacity}\nMax payload: ${maxPayload}`);
+  
+  // Get start and end nodes from the draggable pins
+  const startNode = pickupNodeId || 'Pickup 1';
+  const endNode = deliveryNodeId || 'Delivery 1';
+  
+  console.log(`Running ${algorithm} from ${startNode} to ${endNode}`);
+  
+  // Show loading state
+  const runButton = document.getElementById('run-algo');
+  const originalText = runButton.textContent;
+  runButton.textContent = 'Running...';
+  runButton.disabled = true;
+  
+  // Send request to server
+  fetch('/api/run-algorithm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      algorithm,
+      batteryCapacity,
+      maxPayload,
+      startNode,
+      endNode
+    })
+  })
+  .then(response => response.json())
+  .then(data => {
+    console.log('Algorithm result:', data);
+    
+    if (data.status === 'success') {
+      alert(`Success!\nRoute: ${data.route.join(' → ')}\nDistance: ${data.stats.distance} km\nBattery used: ${data.stats.batteryUsed}%`);
+    } else if (data.status === 'training') {
+      alert('PPO model is training. This may take several minutes. Please try again later.');
+    } else {
+      alert(`Algorithm failed: ${data.message}`);
+    }
+  })
+  .catch(error => {
+    console.error('Algorithm error:', error);
+    alert('Algorithm execution failed. Check console for details.');
+  })
+  .finally(() => {
+    // Restore button state
+    runButton.textContent = originalText;
+    runButton.disabled = false;
+  });
 }
 document.getElementById('run-algo').addEventListener('click', runAlgorithm);
 
