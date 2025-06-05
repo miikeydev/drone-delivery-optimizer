@@ -500,12 +500,12 @@ function runAlgorithm() {
     return;
   }
   
-  console.log(`🚁 Running ${algorithm}: ${pickupNodeId} -> ${deliveryNodeId}`);
+  console.log(`Running ${algorithm}: ${pickupNodeId} -> ${deliveryNodeId}`);
   
   // Show loading
   const runButton = document.getElementById('run-algo');
   runButton.disabled = true;
-  runButton.innerHTML = '⏳';
+  runButton.innerHTML = 'Loading...';
   
   // Clear previous route
   clearRouteVisualization();
@@ -542,7 +542,7 @@ function runAlgorithm() {
       
       if (stats?.success) {
         // Success!
-        const successMsg = `✅ Success!\nSteps: ${stats.steps}\nBattery used: ${stats.batteryUsed || stats.battery_used}%\nRoute: ${(routeNames || []).join(' → ')}`;
+        const successMsg = `Success!\nSteps: ${stats.steps}\nBattery used: ${stats.batteryUsed || stats.battery_used}%\nRoute: ${(routeNames || []).join(' → ')}`;
         alert(successMsg);
         
         // Visualize route with enhanced info for PPO
@@ -562,7 +562,7 @@ function runAlgorithm() {
         }
       } else {
         // Failed
-        const failMsg = `❌ Mission failed!\nReason: ${stats?.termination_reason || data.message}\nSteps: ${stats?.steps || 0}`;
+        const failMsg = `Mission failed!\nReason: ${stats?.termination_reason || data.message}\nSteps: ${stats?.steps || 0}`;
         alert(failMsg);
         
         // Still visualize partial route if available
@@ -572,10 +572,10 @@ function runAlgorithm() {
       }
     } else {
       // Error - Show helpful message for PPO
-      let errorMsg = `❌ ${algorithm.toUpperCase()} execution failed!\n${data.message || 'Unknown error'}`;
+      let errorMsg = `${algorithm.toUpperCase()} execution failed!\n${data.message || 'Unknown error'}`;
       
       if (algorithm === 'ppo' && data.help) {
-        errorMsg += `\n\n💡 Solution: ${data.help}`;
+        errorMsg += `\n\nSolution: ${data.help}`;
       }
       
       if (data.searched_paths) {
@@ -593,7 +593,7 @@ function runAlgorithm() {
   .finally(() => {
     // Restore button
     runButton.disabled = false;
-    runButton.innerHTML = '▶️';
+    runButton.innerHTML = 'Run';
   });
 }
 
