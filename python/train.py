@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, BaseCallback
 from stable_baselines3.common.monitor import Monitor
 import gymnasium as gym
 import numpy as np
@@ -16,13 +16,19 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from env import DroneDeliveryFullEnv
 
 
-def make_env(graph_path: str, battery_init: int, payload_init: int, rank: int = 0):
+def make_env(graph_path: str, battery_init: int, payload_init: int, rank: int = 0,
+             randomize_battery: bool = False, battery_range: tuple = (60, 100),
+             randomize_payload: bool = False, payload_range: tuple = (1, 5)):
     """Create environment factory for vectorization"""
     def _init():
         env = DroneDeliveryFullEnv(
             graph_path=graph_path,
             battery_init=battery_init,
-            payload_init=payload_init
+            payload_init=payload_init,
+            randomize_battery=randomize_battery,
+            battery_range=battery_range,
+            randomize_payload=randomize_payload,
+            payload_range=payload_range
         )
         # Seed the environment
         env.seed(rank)
@@ -31,47 +37,47 @@ def make_env(graph_path: str, battery_init: int, payload_init: int, rank: int = 
     return _init
 
 
-class ProgressCallback:
+class ProgressCallback(BaseCallback):
     """Enhanced callback for training progress with Ctrl-C handling"""
     
-    def __init__(self, check_freq=1000, log_dir="./logs/"):
+    def __init__(self, check_freq=1000, log_dir="./logs/", verbose=1):
+        super().__init__(verbose)
         self.check_freq = check_freq
         self.log_dir = log_dir
-        self.n_calls = 0
         self.interrupted = False
         
         # Set up signal handler for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-        
+    
     def _signal_handler(self, signum, frame):
         print("\n🛑 Training interrupted! Saving model...")
         self.interrupted = True
         
-    def __call__(self, locals_, globals_):
-        self.n_calls += 1
-        
+    def _on_step(self) -> bool:
         # Check for interruption
         if self.interrupted:
             print("💾 Saving model due to interruption...")
             return False  # Stop training
             
-        if self.n_calls % self.check_freq == 0:
-            print(f"📈 Step {self.n_calls * locals_['self'].n_envs}: Training in progress...")
+        if self.num_timesteps % self.check_freq == 0:
+            print(f"📈 Step {self.num_timesteps}: Training in progress...")
             
         return True
 
 
 def train_ppo_full(graph_path: str, battery_init: int = 100, payload_init: int = 1,
                    total_timesteps: int = 1000000, n_envs: int = 8,
-                   save_path: str = "models/drone_ppo_full"):
+                   save_path: str = "models/drone_ppo_full",
+                   randomize_battery: bool = False, battery_range: tuple = (60, 100),
+                   randomize_payload: bool = False, payload_range: tuple = (1, 5)):
     """Train PPO agent on full drone delivery environment"""
     
     print("🚁 Starting Full PPO Training")
     print("=" * 50)
     print(f"Graph: {graph_path}")
-    print(f"Battery init: {battery_init}")
-    print(f"Payload init: {payload_init}")
+    print(f"Battery init: {battery_init} {'(randomized ' + str(battery_range) + ')' if randomize_battery else ''}")
+    print(f"Payload init: {payload_init} {'(randomized ' + str(payload_range) + ')' if randomize_payload else ''}")
     print(f"Total timesteps: {total_timesteps:,}")
     print(f"Parallel environments: {n_envs}")
     print("=" * 50)
@@ -82,7 +88,9 @@ def train_ppo_full(graph_path: str, battery_init: int = 100, payload_init: int =
     
     # Create vectorized environment
     env = SubprocVecEnv([
-        make_env(graph_path, battery_init, payload_init, i) 
+        make_env(graph_path, battery_init, payload_init, i,
+                randomize_battery, battery_range,
+                randomize_payload, payload_range) 
         for i in range(n_envs)
     ])
     
@@ -90,7 +98,11 @@ def train_ppo_full(graph_path: str, battery_init: int = 100, payload_init: int =
     eval_env = DroneDeliveryFullEnv(
         graph_path=graph_path,
         battery_init=battery_init,
-        payload_init=payload_init
+        payload_init=payload_init,
+        randomize_battery=randomize_battery,
+        battery_range=battery_range,
+        randomize_payload=randomize_payload,
+        payload_range=payload_range
     )
     eval_env = Monitor(eval_env)
     
@@ -159,13 +171,16 @@ def train_ppo_full(graph_path: str, battery_init: int = 100, payload_init: int =
         try:
             model.save(final_path)
             print("✅ Model saved successfully!")
-            
-            # Save training metadata
+              # Save training metadata
             metadata = {
                 "timestamp": datetime.now().isoformat(),
                 "total_timesteps": total_timesteps,
                 "battery_init": battery_init,
                 "payload_init": payload_init,
+                "randomize_battery": randomize_battery,
+                "battery_range": battery_range,
+                "randomize_payload": randomize_payload,
+                "payload_range": payload_range,
                 "n_envs": n_envs,
                 "hyperparameters": {
                     "learning_rate": 3e-4,
@@ -198,20 +213,38 @@ def main():
     parser.add_argument("--envs", type=int, default=8, help="Number of parallel environments")
     parser.add_argument("--save", type=str, default="models/drone_ppo_full", help="Save path prefix")
     
-    args = parser.parse_args()
+    # Randomization parameters
+    parser.add_argument("--randomize-battery", action="store_true", help="Randomize battery level each episode")
+    parser.add_argument("--battery-min", type=int, default=60, help="Minimum battery level (default: 60)")
+    parser.add_argument("--battery-max", type=int, default=100, help="Maximum battery level (default: 100)")
+    parser.add_argument("--randomize-payload", action="store_true", help="Randomize payload each episode")
+    parser.add_argument("--payload-min", type=int, default=1, help="Minimum payload (default: 1)")
+    parser.add_argument("--payload-max", type=int, default=5, help="Maximum payload (default: 5)")
     
-    # Validate arguments
+    args = parser.parse_args()
+      # Validate arguments
     if not os.path.exists(args.graph):
         print(f"❌ Graph file not found: {args.graph}")
         sys.exit(1)
         
-    if not (80 <= args.battery <= 100):
-        print(f"❌ Battery must be between 80-100, got {args.battery}")
+    if not (60 <= args.battery <= 100):
+        print(f"❌ Battery must be between 60-100, got {args.battery}")
         sys.exit(1)
         
-    if not (1 <= args.payload <= 3):
-        print(f"❌ Payload must be between 1-3, got {args.payload}")
+    if not (1 <= args.payload <= 5):
+        print(f"❌ Payload must be between 1-5, got {args.payload}")
         sys.exit(1)
+    
+    # Validate randomization ranges
+    if args.randomize_battery:
+        if not (60 <= args.battery_min <= args.battery_max <= 100):
+            print(f"❌ Invalid battery range: {args.battery_min}-{args.battery_max}")
+            sys.exit(1)
+    
+    if args.randomize_payload:
+        if not (1 <= args.payload_min <= args.payload_max <= 5):
+            print(f"❌ Invalid payload range: {args.payload_min}-{args.payload_max}")
+            sys.exit(1)
     
     # Convert to absolute path
     graph_path = os.path.abspath(args.graph)
@@ -223,7 +256,11 @@ def main():
         payload_init=args.payload,
         total_timesteps=args.timesteps,
         n_envs=args.envs,
-        save_path=args.save
+        save_path=args.save,
+        randomize_battery=args.randomize_battery,
+        battery_range=(args.battery_min, args.battery_max),
+        randomize_payload=args.randomize_payload,
+        payload_range=(args.payload_min, args.payload_max)
     )
     
     print("\n🎉 Training completed!")

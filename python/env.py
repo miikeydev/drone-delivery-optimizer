@@ -18,9 +18,10 @@ class DroneDeliveryFullEnv(gym.Env):
     - Complete reward system with pickup/delivery bonuses
     - Proper termination conditions
     """
-    
     def __init__(self, graph_path: str, battery_init: int = 100, payload_init: int = 1, 
-                 max_battery: int = 100, k_neighbors: int = 10, max_steps: int = 200):
+                 max_battery: int = 100, k_neighbors: int = 10, max_steps: int = 200,
+                 randomize_battery: bool = False, battery_range: tuple = (60, 100),
+                 randomize_payload: bool = False, payload_range: tuple = (1, 5)):
         super(DroneDeliveryFullEnv, self).__init__()
         
         # Load graph data
@@ -35,6 +36,12 @@ class DroneDeliveryFullEnv(gym.Env):
         self.battery_init = battery_init
         self.payload_init = payload_init
         self.max_steps = max_steps
+        
+        # Randomization parameters
+        self.randomize_battery = randomize_battery
+        self.battery_range = battery_range
+        self.randomize_payload = randomize_payload
+        self.payload_range = payload_range
         
         # Battery consumption parameters
         self.k_norm = 10.8  # normalization factor
@@ -237,15 +244,25 @@ class DroneDeliveryFullEnv(gym.Env):
             # Fallback if no pickup/delivery nodes
             self.pickup_target = random.choice(range(self.n_nodes))
             self.delivery_target = random.choice(range(self.n_nodes))
-    
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[np.ndarray, Dict]:
         """Reset environment to initial state"""
         if seed is not None:
             self.seed(seed)
         
         self.current_node = None  # Will be set at step 0
-        self.battery = self.battery_init
-        self.payload = self.payload_init
+        
+        # Randomize battery if enabled
+        if self.randomize_battery:
+            self.battery = random.randint(self.battery_range[0], self.battery_range[1])
+        else:
+            self.battery = self.battery_init
+        
+        # Randomize payload if enabled
+        if self.randomize_payload:
+            self.payload = random.randint(self.payload_range[0], self.payload_range[1])
+        else:
+            self.payload = self.payload_init
+        
         self.pickup_done = False
         self.delivery_done = False
         self.recharge_count = 0
@@ -256,10 +273,14 @@ class DroneDeliveryFullEnv(gym.Env):
         self._select_random_targets()
         
         info = {
-            'battery_init': self.battery_init,
-            'payload_init': self.payload_init,
+            'battery_init': self.battery,
+            'payload_init': self.payload,
             'pickup_target': self.pickup_target,
-            'delivery_target': self.delivery_target
+            'delivery_target': self.delivery_target,
+            'randomized': {
+                'battery': self.randomize_battery,
+                'payload': self.randomize_payload
+            }
         }
         
         return self._get_observation(), info

@@ -1,0 +1,24 @@
+{
+  "timestamp": "2025-06-05T15:27:04.854003",
+  "total_timesteps": 2000,
+  "battery_init": 100,
+  "payload_init": 1,
+  "randomize_battery": true,
+  "battery_range": [
+    60,
+    100
+  ],
+  "randomize_payload": true,
+  "payload_range": [
+    1,
+    5
+  ],
+  "n_envs": 2,
+  "hyperparameters": {
+    "learning_rate": 0.0003,
+    "n_steps": 2048,
+    "batch_size": 256,
+    "gamma": 0.99,
+    "ent_coef": 0.01
+  }
+}
