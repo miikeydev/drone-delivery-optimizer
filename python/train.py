@@ -39,8 +39,9 @@ from env import DroneDeliveryFullEnv
 def make_env(graph_path: str, battery_init: int, payload_init: int, rank: int = 0,
              randomize_battery: bool = False, battery_range: tuple = (60, 100),
              randomize_payload: bool = False, payload_range: tuple = (1, 5),
-             use_masking: bool = False, use_curriculum: bool = True):
-    """Create environment factory for vectorization"""
+             use_masking: bool = False, use_curriculum: bool = True,
+             use_node_embedding: bool = True, embedding_dim: int = 32):
+    """Create environment factory for vectorization - FIXED reset format"""
     def _init():
         env = DroneDeliveryFullEnv(
             graph_path=graph_path,
@@ -51,24 +52,27 @@ def make_env(graph_path: str, battery_init: int, payload_init: int, rank: int = 
             randomize_payload=randomize_payload,
             payload_range=payload_range,
             use_curriculum=use_curriculum,
-            curriculum_threshold=0.7  # 70% success rate to advance
+            curriculum_threshold=0.25,
+            use_node_embedding=use_node_embedding,
+            embedding_dim=embedding_dim
         )
         
-        # Set seed on the base environment first
-        env.seed(rank)
+        # Set seed BEFORE any wrapping
+        if hasattr(env, 'seed'):
+            env.seed(rank)
         
-        # FIXED: Simplified action masking - only wrap if requested and available
+        # Apply action masking wrapper if needed
         if use_masking and MASKABLE_PPO_AVAILABLE:
-            # Use the built-in ActionMasker from sb3_contrib directly
             def mask_fn(env_instance):
                 return env_instance.action_masks()
             env = ActionMasker(env, mask_fn)
         
-        # Add monitoring AFTER action masking
+        # Apply monitoring wrapper
         env = Monitor(env)
         
         return env
     
+    # Set random seed for this worker
     set_random_seed(rank)
     return _init
 
@@ -76,7 +80,7 @@ def make_env(graph_path: str, battery_init: int, payload_init: int, rank: int = 
 class TrainingMetricsCallback(BaseCallback):
     """Enhanced callback for comprehensive training metrics and logging"""
     
-    def __init__(self, check_freq=1000, log_dir="./logs/", save_freq=10000, verbose=1):
+    def __init__(self, check_freq=1000, log_dir="./logs/", save_freq=100000, verbose=1):
         super(TrainingMetricsCallback, self).__init__(verbose)
         self.check_freq = check_freq
         self.log_dir = log_dir
@@ -91,7 +95,6 @@ class TrainingMetricsCallback(BaseCallback):
         self.success_rates = deque(maxlen=100)
         self.battery_usage = deque(maxlen=1000)
         self.recharge_counts = deque(maxlen=1000)
-        self.invalid_actions = deque(maxlen=1000)
         
         # Training progress with higher baseline
         self.start_time = time.time()
@@ -99,8 +102,7 @@ class TrainingMetricsCallback(BaseCallback):
         self.training_interrupted = False
         
         # Episode tracking for detailed analysis
-        self.recent_episodes = deque(maxlen=50)
-        self.action_distribution = {}
+        self.recent_episodes = deque(maxlen=100)
         
         # Set up signal handler for graceful interruption
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -109,14 +111,13 @@ class TrainingMetricsCallback(BaseCallback):
     def _signal_handler(self, signum, frame):
         print(f"\n🛑 Training interrupted by signal {signum}")
         self.training_interrupted = True
-        self._save_training_summary()
         
     def _on_step(self) -> bool:
         # Check if training was interrupted
         if self.training_interrupted:
             return False
             
-        # Collect episode information
+        # Collect episode information SILENTLY
         infos = self.locals.get('infos', [])
         for info in infos:
             if 'episode' in info:
@@ -127,41 +128,51 @@ class TrainingMetricsCallback(BaseCallback):
                 # Extract additional metrics if available - FIXED to use NET battery
                 if 'success' in info:
                     self.success_rates.append(1.0 if info['success'] else 0.0)
-                if 'battery_used_net' in info:  # CHANGED from 'battery_used' to 'battery_used_net'
+                if 'battery_used_net' in info:
                     self.battery_usage.append(info['battery_used_net'])
                 if 'recharge_count' in info:
                     self.recharge_counts.append(info['recharge_count'])
-                if 'invalid_action_count' in info:
-                    self.invalid_actions.append(info['invalid_action_count'])
                 
-                # Store recent episode for analysis
-                self.recent_episodes.append({
+                # Store episode data silently
+                episode_data = {
                     'reward': ep_info['r'],
                     'length': ep_info['l'],
                     'timestep': self.num_timesteps,
                     'success': info.get('success', False),
-                    'battery_used': info.get('battery_used_net', 0),  # Use NET battery
+                    'battery_used': info.get('battery_used_net', 0),
                     'recharge_count': info.get('recharge_count', 0),
-                    'route_description': info.get('route_description', 'Unknown'),
                     'pickup_done': info.get('pickup_done', False),
                     'delivery_done': info.get('delivery_done', False),
                     'termination_reason': info.get('termination_reason', 'unknown'),
                     'curriculum_level': info.get('curriculum_level', 0),
-                    'pair_distance': info.get('pair_distance', 0)
-                })
-    
-        # Log metrics every check_freq steps
-        if self.num_timesteps % self.check_freq == 0:
-            self._log_metrics()
+                    'path': info.get('episode_path', []),
+                    'route_description': info.get('route_description', 'Unknown')
+                }
+                self.recent_episodes.append(episode_data)
         
-        # Save detailed analysis every save_freq steps
+        # ONLY log detailed stats every 100k steps
         if self.num_timesteps % self.save_freq == 0:
-            self._save_detailed_analysis()
+            self._log_detailed_stats()
         
         return True
     
-    def _log_metrics(self):
-        """Log current training metrics with massive delivery reward scale"""
+    def _calculate_node_revisits(self, path):
+        """Calculate average node revisits per episode"""
+        if not path or len(path) <= 1:
+            return 0.0, 0.0, 0.0
+        
+        node_counts = {}
+        for node in path:
+            node_counts[node] = node_counts.get(node, 0) + 1
+        
+        # Count how many nodes were visited multiple times
+        revisited_nodes = sum(1 for count in node_counts.values() if count > 1)
+        total_revisits = sum(max(0, count - 1) for count in node_counts.values())
+        
+        return total_revisits, revisited_nodes, len(node_counts)
+    
+    def _log_detailed_stats(self):
+        """Log current training metrics - ONLY every 100k steps"""
         if len(self.episode_rewards) == 0:
             return
         
@@ -188,29 +199,28 @@ class TrainingMetricsCallback(BaseCallback):
         elapsed_time = time.time() - self.start_time
         steps_per_sec = self.num_timesteps / elapsed_time
         
-        # ENHANCED LOGGING with delivery reward context
-        print(f"[{self.num_timesteps:>9}] "
-              f"R={mean_reward:>8.1f} ({self.best_mean_reward:>8.1f})  "  # Wider format for higher rewards
-              f"Success={success_rate:>5.1%}  "
-              f"Pickup={pickup_success_rate:>5.1%}  "
-              f"Delivery={delivery_success_rate:>5.1%}  "
-              f"Recharge={mean_recharges:>4.1f}  "
-              f"Battery={mean_battery:>5.1f}%  "
-              f"Len={mean_length:>5.1f}/150  "
-              f"Level={avg_curriculum_level:>3.1f}  "
-              f"Speed={steps_per_sec:>4.0f}/s")
+        # SIMPLIFIED OUTPUT - just the essential metrics
+        print(f"\n🎯 TRAINING CHECKPOINT - Step {self.num_timesteps:,}")
+        print(f"| mean_reward             | {mean_reward:.1f}     |")
+        print(f"| success_rate            | {success_rate:.1%}   |")
+        print(f"| pickup_rate             | {pickup_success_rate:.1%}   |")
+        print(f"| delivery_rate           | {delivery_success_rate:.1%}   |")
+        print(f"| curriculum_level        | {avg_curriculum_level:.1f}     |")
+        print(f"| training_speed          | {steps_per_sec:.0f}/s   |")
+        print(f"| avg_episode_length      | {mean_length:.0f}     |")
+        print(f"| avg_battery_used        | {mean_battery:.1f}%    |")
         
-        # Show specific improvements with delivery context
-        if len(self.recharge_counts) >= 100:
-            recent_recharges = np.mean(list(self.recharge_counts)[-50:])
-            if recent_recharges < 2.0:
-                print(f"          Recharge efficiency: {recent_recharges:.2f} avg (target <2.0)")
+        # Show best recent episode if available
+        if self.recent_episodes:
+            best_episode = max(self.recent_episodes, key=lambda x: x['reward'])
+            print(f"| best_recent_reward      | {best_episode['reward']:.1f}     |")
+            if best_episode.get('success', False):
+                print(f"| best_route              | SUCCESS |")
+            else:
+                print(f"| best_route              | FAILED  |")
         
-        # Show delivery reward achievement
-        if success_rate > 0.1:  # If more than 10% success
-            avg_successful_reward = np.mean([ep['reward'] for ep in self.recent_episodes if ep.get('success', False)])
-            print(f"          Successful deliveries: avg reward {avg_successful_reward:.1f} (includes +200 delivery bonus)")
-
+        print("=" * 40)
+    
     def _save_detailed_analysis(self):
         """Save detailed training analysis"""
         if not self.recent_episodes:
@@ -329,18 +339,19 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
                         save_path: str = "models/drone_ppo_masked",
                         randomize_battery: bool = False, battery_range: tuple = (60, 100),
                         randomize_payload: bool = False, payload_range: tuple = (1, 5),
-                        use_masking: bool = True, use_curriculum: bool = True):
-    """Train PPO/MaskablePPO agent with curriculum learning"""
+                        use_masking: bool = True, use_curriculum: bool = True,
+                        use_node_embedding: bool = True, embedding_dim: int = 32):
+    """Train PPO/MaskablePPO agent with rebalanced parameters - FIXED BrokenPipe issues"""
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"{save_path}_{timestamp}"
     
-    print("Drone Delivery Training - Anti-Spam Recharge System")
+    print("Drone Delivery Training - Rebalanced Rewards System")
     print("=" * 60)
     print(f"Algorithm: {'MaskablePPO' if use_masking and MASKABLE_PPO_AVAILABLE else 'PPO'}")
     print(f"Graph: {graph_path}")
     print(f"Battery: {battery_init}, Payload: {payload_init}")
-    print(f"Curriculum: {'Enabled' if use_curriculum else 'Disabled'}")
+    print(f"Curriculum: {'Enabled' if use_curriculum else 'Disabled'} (threshold=0.25)")
     print(f"Timesteps: {total_timesteps:,}, Envs: {n_envs}")
     print(f"Run: {run_name}")
     print("=" * 60)
@@ -349,22 +360,24 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     
-    # Create vectorized environment with curriculum
-    if n_envs > 1:
-        env = SubprocVecEnv([
-            make_env(graph_path, battery_init, payload_init, i,
-                    randomize_battery, battery_range,
-                    randomize_payload, payload_range, use_masking, use_curriculum) 
-            for i in range(n_envs)
-        ])
-    else:
-        env = DummyVecEnv([
-            make_env(graph_path, battery_init, payload_init, 0,
-                    randomize_battery, battery_range,
-                    randomize_payload, payload_range, use_masking, use_curriculum)
-        ])
+    # FIXED: Use DummyVecEnv for Windows to avoid BrokenPipe issues
+    print("🔧 Using DummyVecEnv to avoid Windows BrokenPipe issues...")
+    env = DummyVecEnv([
+        make_env(graph_path, battery_init, payload_init, i,
+                randomize_battery, battery_range,
+                randomize_payload, payload_range, use_masking, use_curriculum,
+                use_node_embedding, embedding_dim)
+        for i in range(n_envs)
+    ])
     
-    # Create evaluation environment with curriculum
+    # Apply normalization wrapper
+    from stable_baselines3.common.vec_env import VecNormalize
+    env = VecNormalize(env,
+                       norm_obs=True,
+                       norm_reward=True,
+                       clip_obs=5.0)
+    
+    # Create evaluation environment
     eval_env = DroneDeliveryFullEnv(
         graph_path=graph_path,
         battery_init=battery_init,
@@ -373,98 +386,98 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
         battery_range=battery_range,
         randomize_payload=randomize_payload,
         payload_range=payload_range,
-        use_curriculum=use_curriculum
+        use_curriculum=use_curriculum,
+        curriculum_threshold=0.25,
+        use_node_embedding=use_node_embedding,
+        embedding_dim=embedding_dim
     )
     eval_env = Monitor(eval_env)
     
-    # Choose algorithm and hyperparameters - ENHANCED ANTI-SPAM + BETTER ARCHITECTURE
+    # REBALANCED HYPERPARAMETERS
     if use_masking and MASKABLE_PPO_AVAILABLE:
-        # MaskablePPO with ENHANCED hyperparameters and architecture
+        net_arch = [512, 256, 128]
+        
         model = MaskablePPO(
             "MlpPolicy",
             env,
-            learning_rate=3e-4,
-            n_steps=2048,
+            learning_rate=2e-4,
+            n_steps=4096,
             batch_size=256,
             n_epochs=10,
-            gamma=0.997,          # INCREASED from 0.995 to 0.997 - even more long-term focus
+            gamma=0.995,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.03,        # INCREASED from 0.02 to 0.03 - more exploration to find alternatives to recharge
-            vf_coef=0.5,
+            ent_coef=0.005,
+            vf_coef=0.4,
             max_grad_norm=0.5,
-            verbose=1,
+            verbose=0,
             tensorboard_log=f"./logs/{run_name}/",
-            # NEW: Enhanced network architecture for 470-dimensional observation space
             policy_kwargs=dict(
-                net_arch=[512, 256, 128],  # Increased capacity for better feature extraction
+                net_arch=net_arch,
                 activation_fn=torch.nn.ReLU,
                 ortho_init=False
             )
         )
-        print(f"🧠 Enhanced Architecture: [512, 256, 128] + gamma=0.997, ent_coef=0.03 (anti-ping-pong)")
+        print(f"🧠 Rebalanced architecture: {net_arch} + embedding={use_node_embedding}")
+        print(f"🎯 Hyperparams: lr=2e-4, gamma=0.995, ent_coef=0.005, n_steps=4096")
     else:
-        # Regular PPO with same improvements
         model = PPO(
             "MlpPolicy",
             env,
-            learning_rate=3e-4,
-            n_steps=2048,
+            learning_rate=2e-4,
+            n_steps=4096,
             batch_size=256,
             n_epochs=10,
-            gamma=0.997,          # INCREASED
+            gamma=0.995,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.03,        # INCREASED
-            vf_coef=0.5,
+            ent_coef=0.005,
+            vf_coef=0.4,
             max_grad_norm=0.5,
-            verbose=1,
+            verbose=0,
             tensorboard_log=f"./logs/{run_name}/",
-            # NEW: Enhanced network architecture
             policy_kwargs=dict(
-                net_arch=[512, 256, 128],  # Increased capacity
+                net_arch=[512, 256, 128],
                 activation_fn=torch.nn.ReLU,
                 ortho_init=False
             )
         )
-        print(f"🧠 Enhanced Architecture: [512, 256, 128] + gamma=0.997, ent_coef=0.03 (anti-ping-pong)")
+        print(f"🧠 Rebalanced Architecture: [512, 256, 128] + rebalanced hyperparams")
     
     # Set up callbacks
     metrics_callback = TrainingMetricsCallback(
         check_freq=1000,
         log_dir=f"./logs/{run_name}/",
-        save_freq=10000,
-        verbose=1
+        save_freq=100000,
+        verbose=0
     )
     
-    # Checkpoint callback - save every 50k steps
     checkpoint_callback = CheckpointCallback(
         save_freq=50000,
         save_path="./models/",
-        name_prefix=f"{run_name}_checkpoint"
+        name_prefix=f"{run_name}_checkpoint",
+        verbose=0
     )
     
-    # Create new best notification callback
-    new_best_callback = NewBestCallback(verbose=1)
+    new_best_callback = NewBestCallback(verbose=0)
     
-    # Evaluation callback - save best model (fixed callback configuration)
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path="./models/",
         log_path=f"./logs/{run_name}/",
-        eval_freq=10000,
+        eval_freq=100000,
         deterministic=True,
         render=False,
-        n_eval_episodes=5
+        n_eval_episodes=5,
+        verbose=0
     )
     
     callbacks = [metrics_callback, checkpoint_callback, eval_callback]
     
     try:
-        print(f"\n🎯 Starting training for {total_timesteps:,} timesteps...")
+        print(f"\n🎯 Starting REBALANCED training for {total_timesteps:,} timesteps...")
         start_time = time.time()
         
-        # Train the model
         model.learn(
             total_timesteps=total_timesteps,
             callback=callbacks,
@@ -483,64 +496,70 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
         traceback.print_exc()
         
     finally:
-        # Save final model
-        final_model_path = f"./models/{run_name}_final.zip"
-        model.save(final_model_path)
-        print(f"💾 Final model saved to {final_model_path}")
+        # FIXED: Safer cleanup
+        try:
+            # Save final model and normalization stats
+            final_model_path = f"./models/{run_name}_final.zip"
+            model.save(final_model_path)
+            
+            # Save VecNormalize stats
+            if hasattr(env, 'save'):
+                env.save(f"./models/{run_name}_vecnormalize.pkl")
+            
+            print(f"💾 Final model saved to {final_model_path}")
+            
+            # Save training metadata
+            metadata = {
+                'algorithm': 'MaskablePPO' if use_masking and MASKABLE_PPO_AVAILABLE else 'PPO',
+                'graph_path': graph_path,
+                'battery_init': battery_init,
+                'payload_init': payload_init,
+                'total_timesteps': total_timesteps,
+                'n_envs': n_envs,
+                'rebalanced_rewards': {
+                    'move_penalty': -0.001,
+                    'recharge_penalty': 0.2,
+                    'pickup_reward': 5.0,
+                    'delivery_reward': 30.0
+                },
+                'rebalanced_hyperparameters': {
+                    'learning_rate': 2e-4,
+                    'n_steps': 4096,
+                    'gamma': 0.995,
+                    'ent_coef': 0.005,
+                    'vf_coef': 0.4,
+                    'net_arch': [512, 256, 128]
+                },
+                'curriculum_threshold': 0.25,
+                'normalization': True,
+                'timestamp': timestamp
+            }
+            
+            metadata_path = f"./models/{run_name}_final_metadata.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            print(f"📋 Training metadata saved to {metadata_path}")
         
-        # Save training metadata
-        metadata = {
-            'algorithm': 'MaskablePPO' if use_masking and MASKABLE_PPO_AVAILABLE else 'PPO',
-            'graph_path': graph_path,
-            'battery_init': battery_init,
-            'payload_init': payload_init,
-            'total_timesteps': total_timesteps,
-            'n_envs': n_envs,
-            'randomize_battery': randomize_battery,
-            'battery_range': battery_range,
-            'randomize_payload': randomize_payload,
-            'payload_range': payload_range,
-            'use_masking': use_masking and MASKABLE_PPO_AVAILABLE,
-            'training_time_hours': (time.time() - start_time) / 3600 if 'start_time' in locals() else 0,
-            'timestamp': timestamp,
-            'hyperparameters': {
-                'learning_rate': 3e-4,
-                'n_steps': 2048,
-                'batch_size': 256,
-                'n_epochs': 10,
-                'gamma': 0.997,  # UPDATED
-                'gae_lambda': 0.95,
-                'clip_range': 0.2,
-                'ent_coef': 0.03,  # UPDATED
-                'vf_coef': 0.5,
-                'max_grad_norm': 0.5,
-                'net_arch': [512, 256, 128]  # NEW
-            },
-            'use_curriculum': use_curriculum,
-            'curriculum_threshold': 0.7,
-            'fixes_applied': [
-                'dense_progress_rewards',
-                'neighbor_shuffle_symmetry_breaking', 
-                'enhanced_network_architecture',
-                'anti_pingpong_penalties'
-            ]
-        }
+        except Exception as cleanup_error:
+            print(f"⚠️ Cleanup error: {cleanup_error}")
         
-        metadata_path = f"./models/{run_name}_final_metadata.json"
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
+        # FIXED: Safe environment closing
+        try:
+            env.close()
+        except:
+            pass
         
-        print(f"📋 Training metadata saved to {metadata_path}")
-        
-        # Cleanup
-        env.close()
-        eval_env.close()
+        try:
+            eval_env.close()
+        except:
+            pass
     
     return model, run_name
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train PPO/MaskablePPO for drone delivery with curriculum learning")
+    parser = argparse.ArgumentParser(description="Train PPO/MaskablePPO with anti-aliasing node embedding")
     parser.add_argument("--graph", type=str, required=True, help="Path to graph JSON file")
     parser.add_argument("--battery", type=int, default=100, help="Initial battery level")
     parser.add_argument("--payload", type=int, default=1, help="Initial payload")
@@ -557,6 +576,8 @@ def main():
     parser.add_argument("--payload-max", type=int, help="Maximum payload (alternative to --payload-range)")
     parser.add_argument("--no-masking", action="store_true", help="Disable action masking (use regular PPO)")
     parser.add_argument("--no-curriculum", action="store_true", help="Disable curriculum learning")
+    parser.add_argument("--no-embedding", action="store_true", help="Disable node embedding (may cause aliasing)")
+    parser.add_argument("--embedding-dim", type=int, default=32, help="Node embedding dimension")
     parser.add_argument("--save", type=str, help="Alternative save path (shorter alias)")
     
     args = parser.parse_args()
@@ -587,7 +608,7 @@ def main():
     # Convert to absolute paths
     graph_path = os.path.abspath(args.graph)
     
-    # Train model with curriculum
+    # Train model with anti-aliasing embedding
     model, run_name = train_drone_delivery(
         graph_path=graph_path,
         battery_init=args.battery,
@@ -600,7 +621,9 @@ def main():
         randomize_payload=args.randomize_payload,
         payload_range=tuple(payload_range),
         use_masking=not args.no_masking,
-        use_curriculum=not args.no_curriculum
+        use_curriculum=not args.no_curriculum,
+        use_node_embedding=not args.no_embedding,
+        embedding_dim=args.embedding_dim
     )
     
     print(f"\n🎉 Training session '{run_name}' completed!")
@@ -609,4 +632,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.freeze_support()  # ADDED: Windows BrokenPipe fix
     main()

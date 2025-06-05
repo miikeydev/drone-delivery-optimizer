@@ -5,11 +5,14 @@ import json
 import random
 from typing import Dict, List, Tuple, Optional, Any, Union
 from gymnasium import spaces
+import torch
+import torch.nn as nn
 
 
 class DroneDeliveryFullEnv(gym.Env):
     """
     Complete PPO environment for drone delivery with action masking support.
+    FIXED: Dynamic neighbor count based on actual graph structure
     Implements the full specification with MaskablePPO compatibility:
     - UI parameters (battery_init, payload_init)
     - Direct hub spawning near pickup (no step 0 teleport)
@@ -22,11 +25,16 @@ class DroneDeliveryFullEnv(gym.Env):
     - MaskablePPO and regular PPO compatibility
     """
     def __init__(self, graph_path: str, battery_init: int = 100, payload_init: int = 1, 
-             max_battery: int = 100, k_neighbors: int = 6, max_steps: int = 150,  # REDUCED from 200 to 150
+             max_battery: int = 100, k_neighbors: int = 10, max_steps: int = 150,
              randomize_battery: bool = False, battery_range: tuple = (60, 100),
              randomize_payload: bool = False, payload_range: tuple = (1, 5),
-             use_curriculum: bool = True, curriculum_threshold: float = 0.5):
+             use_curriculum: bool = True, curriculum_threshold: float = 0.25,  # CHANGED from 0.5 to 0.25
+             use_node_embedding: bool = True, embedding_dim: int = 32):
         super(DroneDeliveryFullEnv, self).__init__()
+        
+        # FIXED: Initialize node embedding parameters FIRST
+        self.use_node_embedding = use_node_embedding
+        self.embedding_dim = embedding_dim
         
         # Load graph data
         with open(graph_path, 'r') as f:
@@ -35,11 +43,28 @@ class DroneDeliveryFullEnv(gym.Env):
         self.nodes = self.graph_data['nodes']
         self.edges = self.graph_data['edges']
         self.n_nodes = len(self.nodes)
-        self.k_neighbors = k_neighbors
         self.max_battery = max_battery
         self.battery_init = battery_init
-        self.payload_init = payload_init  # charge capacity when loaded
+        self.payload_init = payload_init
         self.max_steps = max_steps
+        
+        # Build adjacency structure for fast lookup
+        self.adjacency = self._build_adjacency()
+        
+        # FIXED: Force K=10 for consistent observation structure
+        self.k_neighbors = 10  # HARDCODED: every node has exactly 10 outgoing neighbors
+        self.max_degree = 10   # Known structure
+        
+        print(f"✅ FIXED K=10 structure: every node → exactly 10 neighbors")
+        print(f"Graph structure: enforced k_neighbors={self.k_neighbors}")
+        
+        # Initialize node embedding if enabled
+        if self.use_node_embedding:
+            self.node_embedding = nn.Embedding(self.n_nodes, self.embedding_dim)
+            # Initialize with small random weights
+            nn.init.normal_(self.node_embedding.weight, mean=0.0, std=0.1)
+        else:
+            self.node_embedding = None
         
         # Randomization parameters
         self.randomize_battery = randomize_battery
@@ -47,19 +72,20 @@ class DroneDeliveryFullEnv(gym.Env):
         self.randomize_payload = randomize_payload
         self.payload_range = payload_range
         
+        # REBALANCED REWARDS - make training more stable
+        self.move_penalty = -0.001        # CHANGED from -0.01 to -0.001 (x150 ≈ -0.15)
+        self.recharge_penalty = 0.2       # CHANGED from 2.0 to 0.2 (10x less violent)
+        self.pickup_reward = 5.0          # CHANGED from 15.0 to 5.0
+        self.delivery_reward = 30.0       # CHANGED from 200.0 to 30.0
+        
         # Battery consumption parameters
-        self.k_norm = 10.8  # normalization factor
-        self.alpha = 0.2    # payload effect factor
+        self.k_norm = 10.8
+        self.alpha = 0.2
         
-        # Recharge parameters - TOUGHER
-        self.recharge_step = 30  # INCREASED from 20 to 30
-        self.recharge_penalty = 1.0  # INCREASED from 0.05 to 1.0
-        
-        # NEW: HARD LIMIT on recharges - ADD THIS LINE
-        self.MAX_RECHARGES = 5  # MECHANICAL LIMIT - no more than 5 recharges per episode
-        
-        # Build adjacency structure for fast lookup
-        self.adjacency = self._build_adjacency()
+        # Recharge parameters
+        self.recharge_step = 30
+        self.recharge_good_threshold = 0.20
+        self.MAX_RECHARGES = 5
         
         # Find node indices by type
         self.hubs = [i for i, node in enumerate(self.nodes) if node['type'] == 'hubs']
@@ -70,15 +96,14 @@ class DroneDeliveryFullEnv(gym.Env):
         # Node type mappings
         self.type_to_id = {'hubs': 0, 'pickup': 1, 'delivery': 2, 'charging': 3}
         
-        # NEW: Enhanced state space with global delivery signal
-        # one-hot position (N) + battery (1) + payload (1) + flags (2) + 
-        # recharge_count (1) + delivery_dist_global (1) + local_adjacency_enhanced (k*8)
-        state_dim = self.n_nodes + 1 + 1 + 2 + 1 + 1 + (self.k_neighbors * 8)  # CHANGED from k*7 to k*8
+        # UPDATED: Observation space with fixed K=10 structure
+        embedding_size = self.embedding_dim if self.use_node_embedding else 0
+        state_dim = 1 + 1 + 2 + 1 + 1 + (10 * 8) + embedding_size  # FIXED: 10*8 always
         self.observation_space = spaces.Box(low=-1, high=1, shape=(state_dim,), dtype=np.float32)
         
-        # NEW: Action space includes STAY action for recharging
-        self.STAY_ACTION = self.k_neighbors  # Last action index = stay
-        self.action_space = spaces.Discrete(self.k_neighbors + 1)  # +1 for stay action
+        # FIXED: Action space is always 11 (10 moves + 1 stay)
+        self.STAY_ACTION = 10  # Action index 10 = stay
+        self.action_space = spaces.Discrete(11)  # 0-9=move, 10=stay
         
         # Cache for shortest paths (computed once per episode)
         self.dist_to_pickup = None
@@ -104,11 +129,11 @@ class DroneDeliveryFullEnv(gym.Env):
         
         # Curriculum learning parameters
         self.use_curriculum = use_curriculum
-        self.curriculum_threshold = curriculum_threshold
+        self.curriculum_threshold = curriculum_threshold  # Now uses 0.25 threshold
         self.curriculum_level = 0
         self.max_curriculum_level = 4
         self.episode_successes = []
-        self.curriculum_window = 30  # REDUCED from 50 to 30
+        self.curriculum_window = 30
         
         # NEW: Curriculum parameters for battery and payload
         self.curriculum_battery_levels = [
@@ -130,10 +155,11 @@ class DroneDeliveryFullEnv(gym.Env):
         # Calculate pickup-delivery distances for curriculum
         self._calculate_pickup_delivery_distances()
         
-        print(f"Initialized environment: {self.n_nodes} nodes, k_neighbors={k_neighbors}")
-        print(f"Action space: {self.action_space.n} (0-{self.k_neighbors-1}=move, {self.STAY_ACTION}=stay)")
+        print(f"Initialized environment: {self.n_nodes} nodes, k_neighbors={self.k_neighbors}")
+        print(f"Action space: {self.action_space.n} (0-9=move to neighbor, 10=stay)")
+        print(f"Observation space: {state_dim} dims (K=10 fixed structure)")
         print(f"MAX_RECHARGES={self.MAX_RECHARGES}, recharge_step={self.recharge_step}")
-        print(f"Enhanced: explicit direction indicators per neighbor + 30% recharge threshold + 150 max steps")
+        print(f"Enhanced: K=10 regularity + explicit direction indicators")
 
     def seed(self, seed: Optional[int] = None) -> List[int]:
         """Seed the environment's random number generator."""
@@ -146,17 +172,16 @@ class DroneDeliveryFullEnv(gym.Env):
         return [seed]
     
     def _build_adjacency(self) -> Dict[int, List[Tuple[int, float]]]:
-        """Build adjacency list from edges with distances."""
-        adjacency = {i: [] for i in range(self.n_nodes)}
+        """Build K=10 outgoing adjacency (directed) for consistent observation structure."""
+        # First, collect all undirected edges
+        undirected = {i: [] for i in range(self.n_nodes)}
         for edge in self.edges:
             # Handle both frontend format (u, v, dist) and training format (source, target, distance)
             if 'source' in edge and 'target' in edge:
-                # Training format
                 source = edge['source']
                 target = edge['target']
                 distance = edge.get('distance', edge.get('dist', 0))
             elif 'u' in edge and 'v' in edge:
-                # Frontend format - CONVERT to expected format
                 source = edge['u']
                 target = edge['v']
                 distance = edge.get('dist', edge.get('distance', 0))
@@ -164,27 +189,54 @@ class DroneDeliveryFullEnv(gym.Env):
                 print(f"⚠️ Warning: Unknown edge format: {edge}")
                 continue
                 
-            adjacency[source].append((target, distance))
-            adjacency[target].append((source, distance))
-        return adjacency
-    
-    def _get_k_nearest_neighbors(self, node_id: int) -> List[Tuple[int, float]]:
-        """Get k nearest neighbors from current node."""
-        if node_id not in self.adjacency:
-            return []
+            # Add both directions to undirected graph first
+            undirected[source].append((target, distance))
+            undirected[target].append((source, distance))
         
-        # Get all connected nodes
+        # FIXED: Now create directed K=10 outgoing adjacency
+        directed_adjacency = {i: [] for i in range(self.n_nodes)}
+        
+        for node_id in range(self.n_nodes):
+            neighbors = undirected[node_id]
+            
+            # CRITICAL: Sort by distance and take exactly K=10 outgoing neighbors
+            neighbors_sorted = sorted(neighbors, key=lambda x: x[1])
+            
+            # Take exactly K=10 neighbors (pad with duplicates if needed)
+            if len(neighbors_sorted) >= 10:
+                selected_neighbors = neighbors_sorted[:10]
+            else:
+                # Pad with the closest neighbor repeated
+                selected_neighbors = neighbors_sorted[:]
+                if neighbors_sorted:
+                    closest = neighbors_sorted[0]
+                    while len(selected_neighbors) < 10:
+                        selected_neighbors.append(closest)
+                else:
+                    # Fallback: self-loop if completely isolated
+                    selected_neighbors = [(node_id, 0.0)] * 10
+            
+            directed_adjacency[node_id] = selected_neighbors
+            
+            # ASSERT: Every node has exactly 10 outgoing neighbors
+            assert len(directed_adjacency[node_id]) == 10, \
+                f"Node {node_id} has {len(directed_adjacency[node_id])} neighbors, expected 10"
+        
+        print(f"✅ Built K=10 directed adjacency: every node has exactly 10 outgoing neighbors")
+        return directed_adjacency
+    
+    def _get_neighbors(self, node_id: int) -> List[Tuple[int, float]]:
+        """Get exactly K=10 neighbors for consistent structure."""
+        if node_id not in self.adjacency:
+            return [(node_id, 0.0)] * 10  # Fallback: 10 self-loops
+        
         neighbors = self.adjacency[node_id]
         
-        # Sort by distance and take k nearest
-        neighbors_sorted = sorted(neighbors, key=lambda x: x[1])
+        # ASSERT: Should always be exactly 10 due to _build_adjacency
+        assert len(neighbors) == 10, f"Expected 10 neighbors, got {len(neighbors)} for node {node_id}"
         
-        # NEW: Break symmetry by shuffling neighbors with equal distances
-        import random
-        random.shuffle(neighbors_sorted)  # Breaks ties in distance ordering
-        
-        return neighbors_sorted[:self.k_neighbors]
-    
+        return neighbors  # Already sorted by distance in _build_adjacency
+
     def _calculate_distances(self) -> Tuple[float, float, float]:
         """Calculate distances to closest pickup, delivery, and charging station."""
         if self.current_node is None:
@@ -258,11 +310,7 @@ class DroneDeliveryFullEnv(gym.Env):
         return distances
 
     def _get_observation(self) -> np.ndarray:
-        """Get current observation state with directional deltas + global delivery signal."""
-        # One-hot position
-        position = np.zeros(self.n_nodes, dtype=np.float32)
-        if self.current_node is not None:
-            position[self.current_node] = 1.0
+        """Get observation with K=10 fixed structure."""
         
         # Normalized battery and payload
         battery_norm = self.battery / self.max_battery
@@ -275,27 +323,26 @@ class DroneDeliveryFullEnv(gym.Env):
         # Recharge count (normalized)
         recharge_norm = min(1.0, self.recharge_count / 5.0)
         
-        # Global delivery distance signal (always available)
+        # Global delivery distance signal
         delivery_dist_global = 0.0
         if self.pickup_done and not self.delivery_done and self.dist_to_delivery and self.current_node is not None:
             cur_to_delivery = self.dist_to_delivery.get(self.current_node, float('inf'))
             if cur_to_delivery != float('inf'):
-                delivery_dist_global = min(1.0, cur_to_delivery / 100.0)  # Normalize to [0,1]
+                delivery_dist_global = min(1.0, cur_to_delivery / 100.0)
         
-        # NEW: Enhanced local adjacency with EXPLICIT direction indicators (k*8)
-        local_adj = np.zeros(self.k_neighbors * 8, dtype=np.float32)  # CHANGED from k*7 to k*8
+        # FIXED: K=10 local adjacency (always 80 dims = 10 neighbors * 8 features)
+        local_adj = np.zeros(80, dtype=np.float32)  # FIXED: 10*8 = 80 always
         if self.current_node is not None:
-            neighbors = self._get_k_nearest_neighbors(self.current_node)
+            neighbors = self._get_neighbors(self.current_node)
             
             # Get current distances to targets
             cur_to_pickup = self.dist_to_pickup.get(self.current_node, float('inf')) if self.dist_to_pickup else float('inf')
             cur_to_delivery = self.dist_to_delivery.get(self.current_node, float('inf')) if self.dist_to_delivery else float('inf')
             
-            for i, (neighbor_id, edge_distance) in enumerate(neighbors):
-                if i >= self.k_neighbors:
-                    break
-                
-                base_idx = i * 8  # CHANGED from i * 7 to i * 8
+            # FIXED: Process exactly 10 neighbors
+            for i in range(10):
+                neighbor_id, edge_distance = neighbors[i]
+                base_idx = i * 8
                 
                 # [0-3] Node type (one-hot encoding)
                 node_type = self.nodes[neighbor_id]['type']
@@ -310,58 +357,63 @@ class DroneDeliveryFullEnv(gym.Env):
                 if neighbor_id == self.delivery_target and self.pickup_done and not self.delivery_done:
                     local_adj[base_idx + 5] = 1.0
                 
-                # [6] ENHANCED: Does this move get us CLOSER to objective? (+1=closer, -1=farther, 0=neutral)
+                # [6] Direction indicator (+1=closer, -1=farther, 0=neutral)
                 direction_indicator = 0.0
                 
                 if not self.pickup_done and self.dist_to_pickup:
-                    # Phase 1: Focus on pickup target
                     nbr_to_pickup = self.dist_to_pickup.get(neighbor_id, float('inf'))
                     if cur_to_pickup != float('inf') and nbr_to_pickup != float('inf'):
                         if nbr_to_pickup < cur_to_pickup:
-                            direction_indicator = 1.0  # Moving CLOSER to pickup
+                            direction_indicator = 1.0
                         elif nbr_to_pickup > cur_to_pickup:
-                            direction_indicator = -1.0  # Moving FARTHER from pickup
-                        # else: stays 0.0 (same distance)
+                            direction_indicator = -1.0
                         
                 elif self.pickup_done and not self.delivery_done and self.dist_to_delivery:
-                    # Phase 2: Focus on delivery target
                     nbr_to_delivery = self.dist_to_delivery.get(neighbor_id, float('inf'))
                     if cur_to_delivery != float('inf') and nbr_to_delivery != float('inf'):
                         if nbr_to_delivery < cur_to_delivery:
-                            direction_indicator = 1.0  # Moving CLOSER to delivery
+                            direction_indicator = 1.0
                         elif nbr_to_delivery > cur_to_delivery:
-                            direction_indicator = -1.0  # Moving FARTHER from delivery
-                        # else: stays 0.0 (same distance)
+                            direction_indicator = -1.0
                 
                 local_adj[base_idx + 6] = direction_indicator
                 
-                # [7] NEW: Distance delta magnitude (how much closer/farther)
+                # [7] Distance delta magnitude
                 delta_magnitude = 0.0
                 
                 if not self.pickup_done and self.dist_to_pickup:
                     nbr_to_pickup = self.dist_to_pickup.get(neighbor_id, float('inf'))
                     if cur_to_pickup != float('inf') and nbr_to_pickup != float('inf'):
                         delta_distance = abs(cur_to_pickup - nbr_to_pickup)
-                        delta_magnitude = min(1.0, delta_distance / 20.0)  # Normalize to [0,1]
+                        delta_magnitude = min(1.0, delta_distance / 20.0)
                         
                 elif self.pickup_done and not self.delivery_done and self.dist_to_delivery:
                     nbr_to_delivery = self.dist_to_delivery.get(neighbor_id, float('inf'))
                     if cur_to_delivery != float('inf') and nbr_to_delivery != float('inf'):
                         delta_distance = abs(cur_to_delivery - nbr_to_delivery)
-                        delta_magnitude = min(1.0, delta_distance / 20.0)  # Normalize to [0,1]
+                        delta_magnitude = min(1.0, delta_distance / 20.0)
                 
                 local_adj[base_idx + 7] = delta_magnitude
 
-        # Enhanced observation with explicit direction indicators
-        observation = np.concatenate([
-            position,                    # N dimensions
+        # Fixed observation structure: 6 global + 80 local + embedding
+        local_features = np.concatenate([
             [battery_norm],             # 1 dimension
             [payload_norm],             # 1 dimension
             [pickup_flag, delivery_flag], # 2 dimensions
             [recharge_norm],            # 1 dimension
             [delivery_dist_global],     # 1 dimension
-            local_adj                   # k*8 dimensions (CHANGED from k*7)
+            local_adj                   # 80 dimensions (K=10 * 8 features)
         ])
+        
+        # Add node embedding if enabled
+        if self.use_node_embedding and self.current_node is not None:
+            with torch.no_grad():
+                node_tensor = torch.tensor([self.current_node], dtype=torch.long)
+                node_embed = self.node_embedding(node_tensor).squeeze(0).numpy()
+            
+            observation = np.concatenate([local_features, node_embed])
+        else:
+            observation = local_features
         
         return observation.astype(np.float32)
     
@@ -382,28 +434,29 @@ class DroneDeliveryFullEnv(gym.Env):
                     visited.add(neighbor)
                     queue.append((neighbor, dist + 1))
         
-        # Fallback (should never be reached in connected K-NN graph)
+        # Fallback (should never be reached in connected graph)
         return random.choice(self.hubs) if self.hubs else 0
     
     def _get_action_mask(self) -> np.ndarray:
-        """Get mask for valid actions. True = valid, False = invalid."""
+        """Get mask for valid actions with K=10 structure."""
         mask = np.zeros(self.action_space.n, dtype=bool)
         
         if self.current_node is not None:
-            # Movement actions (0 to k_neighbors-1)
-            neighbors = self._get_k_nearest_neighbors(self.current_node)
-            for i, (neighbor_id, distance) in enumerate(neighbors):
-                if i < self.k_neighbors:
-                    battery_cost = self._calculate_battery_cost(distance)
-                    if self.battery >= battery_cost:
-                        mask[i] = True
+            # Movement actions (0-9 for K=10 neighbors)
+            neighbors = self._get_neighbors(self.current_node)
+            
+            for i in range(10):  # FIXED: exactly 10 neighbors always
+                neighbor_id, distance = neighbors[i]
+                battery_cost = self._calculate_battery_cost(distance)
+                if self.battery >= battery_cost:
+                    mask[i] = True
         
-            # STAY action (k_neighbors index) - Only block if physically impossible
+            # STAY action (index 10)
             current_node_type = self.nodes[self.current_node]['type']
-            mask[self.STAY_ACTION] = (
-                current_node_type == 'charging' and              # Only on charging stations
-                not self.stayed_last_step and                    # Prevent stay spam
-                self.recharge_count < self.MAX_RECHARGES         # Respect recharge limit
+            mask[10] = (  # FIXED: action 10 = stay
+                current_node_type == 'charging' and
+                not self.stayed_last_step and
+                self.recharge_count < self.MAX_RECHARGES
             )
     
         return mask
@@ -471,6 +524,41 @@ class DroneDeliveryFullEnv(gym.Env):
         
         return float('inf')  # No path found
     
+    def _select_targets(self):
+        """Select pickup and delivery targets based on curriculum level."""
+        if self.use_curriculum and hasattr(self, 'curriculum_pairs'):
+            # Select from curriculum-appropriate pairs
+            level_pairs = self.curriculum_pairs[self.curriculum_level]
+            if level_pairs:
+                selected_pair = random.choice(level_pairs)
+                self.pickup_target = selected_pair['pickup']
+                self.delivery_target = selected_pair['delivery']
+                self.current_pair_distance = selected_pair['distance']
+            else:
+                # Fallback if no pairs available
+                self.pickup_target = random.choice(self.pickups) if self.pickups else 0
+                self.delivery_target = random.choice(self.deliveries) if self.deliveries else 0
+                self.current_pair_distance = 0
+        else:
+            # Random selection (no curriculum)
+            self.pickup_target = random.choice(self.pickups) if self.pickups else 0
+            self.delivery_target = random.choice(self.deliveries) if self.deliveries else 0
+            self.current_pair_distance = 0
+    
+    def _get_curriculum_battery_range(self) -> tuple:
+        """Get current curriculum battery range."""
+        if self.use_curriculum and hasattr(self, 'curriculum_battery_levels'):
+            return self.curriculum_battery_levels[self.curriculum_level]
+        else:
+            return self.battery_range
+    
+    def _get_curriculum_payload_range(self) -> tuple:
+        """Get current curriculum payload range."""
+        if self.use_curriculum and hasattr(self, 'curriculum_payload_levels'):
+            return self.curriculum_payload_levels[self.curriculum_level]
+        else:
+            return self.payload_range
+    
     def _update_curriculum(self, success: bool):
         """Update curriculum level based on recent performance."""
         if not self.use_curriculum:
@@ -481,12 +569,13 @@ class DroneDeliveryFullEnv(gym.Env):
         if len(self.episode_successes) > self.curriculum_window:
             self.episode_successes.pop(0)
         
-        # NEW: Reduced minimum episodes before update
-        if len(self.episode_successes) < min(10, self.curriculum_window // 3):  # REDUCED from 20
+        if len(self.episode_successes) < min(10, self.curriculum_window // 3):
             return
         
         # Calculate recent success rate
         recent_success_rate = sum(self.episode_successes) / len(self.episode_successes)
+        
+        # REMOVED: Debug prints - only log curriculum changes, not every check
         
         # Increase difficulty if doing well
         if (recent_success_rate >= self.curriculum_threshold and 
@@ -494,7 +583,6 @@ class DroneDeliveryFullEnv(gym.Env):
             old_level = self.curriculum_level
             self.curriculum_level += 1
             
-            # Get new parameters for logging
             new_battery_range = self.curriculum_battery_levels[self.curriculum_level]
             new_payload_range = self.curriculum_payload_levels[self.curriculum_level]
             
@@ -503,16 +591,14 @@ class DroneDeliveryFullEnv(gym.Env):
             print(f"   New battery range: {new_battery_range}")
             print(f"   New payload range: {new_payload_range}")
             
-            # Reset tracking for new level
             self.episode_successes = []
             
         # Decrease difficulty if struggling too much
-        elif (recent_success_rate < 0.2 and self.curriculum_level > 0 and  # LOWERED from 0.3
+        elif (recent_success_rate < 0.2 and self.curriculum_level > 0 and
               len(self.episode_successes) >= self.curriculum_window):
             old_level = self.curriculum_level
             self.curriculum_level -= 1
             
-            # Get new parameters for logging
             new_battery_range = self.curriculum_battery_levels[self.curriculum_level]
             new_payload_range = self.curriculum_payload_levels[self.curriculum_level]
             
@@ -521,61 +607,8 @@ class DroneDeliveryFullEnv(gym.Env):
             print(f"   New battery range: {new_battery_range}")
             print(f"   New payload range: {new_payload_range}")
             
-            # Reset tracking for easier level
             self.episode_successes = []
 
-    def _get_curriculum_battery_range(self) -> tuple:
-        """Get battery range for current curriculum level."""
-        if not self.use_curriculum:
-            return self.battery_range
-        return self.curriculum_battery_levels[self.curriculum_level]
-
-    def _get_curriculum_payload_range(self) -> tuple:
-        """Get payload range for current curriculum level."""
-        if not self.use_curriculum:
-            return self.payload_range
-        return self.curriculum_payload_levels[self.curriculum_level]
-    
-    def _select_targets_curriculum(self):
-        """Select pickup and delivery targets based on curriculum level."""
-        if not self.use_curriculum or not self.curriculum_pairs:
-            # Fallback to random selection
-            self._select_targets_random()
-            return
-        
-        # Get pairs for current curriculum level
-        current_pairs = self.curriculum_pairs[self.curriculum_level]
-        
-        if not current_pairs:
-            self._select_targets_random()
-            return
-        
-        # Select random pair from current curriculum level
-        selected_pair = random.choice(current_pairs)
-        self.pickup_target = selected_pair['pickup']
-        self.delivery_target = selected_pair['delivery']
-        
-        # Store pair info for logging
-        self.current_pair_distance = selected_pair['distance']
-    
-    def _select_targets_random(self):
-        """Fallback random target selection."""
-        if self.pickup_target is None and self.pickups:
-            self.pickup_target = random.choice(self.pickups)
-        if self.delivery_target is None and self.deliveries:
-            self.delivery_target = random.choice(self.deliveries)
-        self.current_pair_distance = self._bfs_distance_between_nodes(
-            self.pickup_target, self.delivery_target) if self.pickup_target and self.delivery_target else 0
-    
-    def _select_targets(self):
-        """Select pickup and delivery targets (curriculum or random)."""
-        # Only select if targets are not already set (allows manual override)
-        if self.pickup_target is None or self.delivery_target is None:
-            if self.use_curriculum:
-                self._select_targets_curriculum()
-            else:
-                self._select_targets_random()
-    
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
         """Reset the environment to initial state."""
         super().reset(seed=seed)
@@ -588,8 +621,7 @@ class DroneDeliveryFullEnv(gym.Env):
         # Select targets (curriculum-based if enabled)
         self._select_targets()
         
-        # NEW: Pre-compute shortest paths from targets to all nodes (once per episode)
-        print(f"🔄 Computing shortest paths for pickup={self.pickup_target}, delivery={self.delivery_target}")
+        # Remove the print statement - compute paths silently
         self.dist_to_pickup = self._dijkstra_from_target(self.pickup_target)
         self.dist_to_delivery = self._dijkstra_from_target(self.delivery_target)
         
@@ -646,9 +678,9 @@ class DroneDeliveryFullEnv(gym.Env):
         }
         
         return observation, info
-    
+
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, dict]:
-        """Execute one step in the environment."""
+        """Execute one step with K=10 fixed structure."""
         reward = 0.0
         terminated = False
         truncated = False
@@ -662,25 +694,22 @@ class DroneDeliveryFullEnv(gym.Env):
             info['termination_reason'] = 'no_current_node'
             info['action_type'] = 'error'
         
-        # Handle STAY action first
-        elif action == self.STAY_ACTION:
+        # Handle STAY action (action=10)
+        elif action == 10:  # FIXED: stay action is index 10
             self.stayed_last_step = True
             current_node_type = self.nodes[self.current_node]['type']
             
             if current_node_type != 'charging':
-                # Allow staying but give small penalty - no termination
-                reward = -0.5  # REDUCED from -3.0, no termination
+                reward = -0.5
                 info['action_type'] = 'stay_invalid'
             else:
-                # 30% threshold recharge logic
                 battery_percentage = self.battery / self.max_battery
                 
-                if battery_percentage <= 0.30:  # Battery ≤ 30% = good decision, small bonus
-                    base_reward = 0.5
-                else:                    
-                    base_reward = -1.0
+                if battery_percentage <= self.recharge_good_threshold:
+                    base_reward = 1.0
+                else:
+                    base_reward = -self.recharge_penalty
                 
-                # Apply recharge
                 old_battery = self.battery
                 self.battery = min(self.max_battery, self.battery + self.recharge_step)
                 self.recharge_count += 1
@@ -690,92 +719,96 @@ class DroneDeliveryFullEnv(gym.Env):
                 info['battery_gained'] = self.battery - old_battery
                 info['battery_percentage_before'] = battery_percentage
                 info['recharge_count'] = self.recharge_count
+                info['recharge_was_necessary'] = battery_percentage <= self.recharge_good_threshold
             
             self.step_count += 1
             
-        # MOVEMENT actions (0 to k_neighbors-1)
-        else:
+        # MOVEMENT actions (0-9 for K=10 neighbors)
+        elif 0 <= action <= 9:  # FIXED: movement actions are 0-9
             self.stayed_last_step = False
-            neighbors = self._get_k_nearest_neighbors(self.current_node)
+            neighbors = self._get_neighbors(self.current_node)
             
-            if action < len(neighbors):
-                next_node, distance = neighbors[action]
-                battery_cost = self._calculate_battery_cost(distance)
+            # FIXED: Direct indexing since we have exactly 10 neighbors
+            next_node, distance = neighbors[action]
+            battery_cost = self._calculate_battery_cost(distance)
+            
+            if self.battery >= battery_cost:
+                # Execute movement
+                self.battery -= battery_cost
+                old_node = self.current_node
+                self.current_node = next_node
+                self.episode_path.append(next_node)
                 
-                if self.battery >= battery_cost:
-                    # Execute movement
-                    self.battery -= battery_cost
-                    old_node = self.current_node
-                    self.current_node = next_node
-                    self.episode_path.append(next_node)
-                    
-                    # Base movement penalty
-                    reward = -0.01
-                    
-                    # NEW: DENSE PROGRESS REWARD - This is the key fix!
-                    if not self.pickup_done and self.dist_to_pickup:
-                        # Phase 1: Reward getting closer to pickup
-                        old_dist = self.last_dist_to_pickup
-                        new_dist = self.dist_to_pickup.get(self.current_node, float('inf'))
-                        if old_dist != float('inf') and new_dist != float('inf'):
-                            progress = old_dist - new_dist  # positive = getting closer
-                            progress_reward = 0.02 * progress
-                            # Extra penalty for moving away to discourage ping-pong
-                            if progress < 0:
-                                progress_reward *= 1.5  # 1.5x penalty for moving away
-                            reward += progress_reward
-                            info['progress_to_pickup'] = progress
-                            info['progress_reward'] = progress_reward
-                        self.last_dist_to_pickup = new_dist
+                # Rebalanced move penalty
+                reward = self.move_penalty
+                
+                # Dense progress rewards
+                if not self.pickup_done and self.dist_to_pickup:
+                    old_dist = self.last_dist_to_pickup
+                    new_dist = self.dist_to_pickup.get(self.current_node, float('inf'))
+                    if old_dist != float('inf') and new_dist != float('inf'):
+                        progress = old_dist - new_dist
+                        progress_reward = 0.02 * progress
+                        if progress < 0:
+                            progress_reward *= 1.5
+                        reward += progress_reward
+                        info['progress_to_pickup'] = progress
+                        info['progress_reward'] = progress_reward
                         
-                    elif self.pickup_done and not self.delivery_done and self.dist_to_delivery:
-                        # Phase 2: Reward getting closer to delivery
-                        old_dist = self.last_dist_to_delivery
-                        new_dist = self.dist_to_delivery.get(self.current_node, float('inf'))
-                        if old_dist != float('inf') and new_dist != float('inf'):
-                            progress = old_dist - new_dist  # positive = getting closer
-                            progress_reward = 0.02 * progress
-                            # Extra penalty for moving away
-                            if progress < 0:
-                                progress_reward *= 1.5  # 1.5x penalty for moving away
-                            reward += progress_reward
-                            info['progress_to_delivery'] = progress
-                            info['progress_reward'] = progress_reward
-                        self.last_dist_to_delivery = new_dist
+                        # REMOVED: Debug prints for progress - too spammy
+                        # if 'progress_reward' in info:
+                        #     print(f"[DBG] progress {info['progress_reward']:.3f}")
+                    self.last_dist_to_pickup = new_dist
                     
-                    # Check if we're at pickup/delivery targets
-                    if next_node == self.pickup_target and not self.pickup_done:
-                        self.pickup_done = True
-                        self.payload = self.payload_init if self.randomize_payload else self.payload_init
-                        reward += 15.0
-                        info['payload_loaded'] = self.payload
+                elif self.pickup_done and not self.delivery_done and self.dist_to_delivery:
+                    old_dist = self.last_dist_to_delivery
+                    new_dist = self.dist_to_delivery.get(self.current_node, float('inf'))
+                    if old_dist != float('inf') and new_dist != float('inf'):
+                        progress = old_dist - new_dist
+                        progress_reward = 0.02 * progress
+                        if progress < 0:
+                            progress_reward *= 1.5
+                        reward += progress_reward
+                        info['progress_to_delivery'] = progress
+                        info['progress_reward'] = progress_reward
                         
-                    elif next_node == self.delivery_target and self.pickup_done and not self.delivery_done:
-                        self.delivery_done = True
-                        self.payload = 0
-                        reward += 200.0  # Big success reward
-                        info['delivery_completed'] = True
-                        
-                    # REMOVED: No penalty for visiting delivery without pickup
-                    # Players can explore freely
-                        
-                    info['action_type'] = 'move'
-                    info['distance'] = distance
-                    info['battery_cost'] = battery_cost
+                        # REMOVED: Debug prints for progress - too spammy
+                        # if 'progress_reward' in info:
+                        #     print(f"[DBG] progress {info['progress_reward']:.3f}")
+                    self.last_dist_to_delivery = new_dist
+                
+                # CHANGED: Use rebalanced rewards
+                if next_node == self.pickup_target and not self.pickup_done:
+                    self.pickup_done = True
+                    self.payload = self.payload_init if self.randomize_payload else self.payload_init
+                    reward += self.pickup_reward  # Now 5.0 instead of 15.0
+                    info['payload_loaded'] = self.payload
                     
-                else:
-                    # Not enough battery
-                    reward = -2.0
-                    info['action_type'] = 'move_insufficient_battery'
-                    info['required_battery'] = battery_cost
-                    info['current_battery'] = self.battery
+                elif next_node == self.delivery_target and self.pickup_done and not self.delivery_done:
+                    self.delivery_done = True
+                    self.payload = 0
+                    reward += self.delivery_reward  # Now 30.0 instead of 200.0
+                    info['delivery_completed'] = True
+                    
+                info['action_type'] = 'move'
+                info['distance'] = distance
+                info['battery_cost'] = battery_cost
+                
             else:
-                # Invalid action index
                 reward = -2.0
-                terminated = True
-                info['termination_reason'] = 'invalid_action_index'
-                info['action_type'] = 'invalid_move'
+                info['action_type'] = 'move_insufficient_battery'
+                info['required_battery'] = battery_cost
+                info['current_battery'] = self.battery
             
+            self.step_count += 1
+            
+        else:
+            # Invalid action
+            reward = -2.0
+            terminated = True
+            info['termination_reason'] = 'invalid_action_index'
+            info['action_type'] = 'invalid_action'
+            info['action_requested'] = action
             self.step_count += 1
         
         # Check termination conditions
@@ -803,7 +836,6 @@ class DroneDeliveryFullEnv(gym.Env):
         self.episode_rewards.append(reward)
         self.total_reward += reward
 
-        # Battery metrics (unchanged)
         battery_used_gross = self.battery_init - self.battery
         if self.recharge_count > 0:
             battery_recharged = self.recharge_count * self.recharge_step
@@ -823,7 +855,9 @@ class DroneDeliveryFullEnv(gym.Env):
             'total_reward': self.total_reward,
             'success': self.delivery_done,
             'battery_used_net': battery_used_net,
-            'stayed_last_step': self.stayed_last_step
+            'stayed_last_step': self.stayed_last_step,
+            'episode_path': self.episode_path.copy(),
+            'route_description': self._get_route_description()
         })
 
         if terminated or truncated:
@@ -832,6 +866,25 @@ class DroneDeliveryFullEnv(gym.Env):
 
         observation = self._get_observation()
         return observation, reward, terminated, truncated, info
+
+    def get_embedding_parameters(self):
+        """Get embedding parameters for training (used by external trainers)."""
+        if self.use_node_embedding:
+            return self.node_embedding.parameters()
+        else:
+            return []
+
+    def save_embedding(self, path: str):
+        """Save learned node embedding."""
+        if self.use_node_embedding:
+            torch.save(self.node_embedding.state_dict(), path)
+            print(f"💾 Node embedding saved to {path}")
+
+    def load_embedding(self, path: str):
+        """Load pre-trained node embedding."""
+        if self.use_node_embedding:
+            self.node_embedding.load_state_dict(torch.load(path))
+            print(f"📂 Node embedding loaded from {path}")
 
     def _get_mission_progress(self) -> str:
         """Get current mission progress description."""

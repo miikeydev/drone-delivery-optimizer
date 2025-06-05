@@ -1,0 +1,92 @@
+{
+  "timestamp": "20250605_232400",
+  "total_timesteps": 250000,
+  "recent_episodes_count": 50,
+  "success_rate": 0.08,
+  "successful_episodes": {
+    "count": 4,
+    "avg_reward": 112.5277055,
+    "avg_length": 150.0,
+    "avg_battery_used": 0.0,
+    "best_routes": [
+      {
+        "reward": 184.602823,
+        "length": 150,
+        "timestep": 248400,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 8,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 98.886266,
+        "length": 150,
+        "timestep": 244800,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 9,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 88.067752,
+        "length": 150,
+        "timestep": 247200,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 8,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 78.553981,
+        "length": 150,
+        "timestep": 248400,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 7,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      }
+    ]
+  },
+  "failed_episodes": {
+    "count": 46,
+    "avg_reward": -155.9839369130435,
+    "avg_length": 150.0,
+    "failure_patterns": {
+      "termination_reasons": {
+        "max_steps_reached": 46
+      },
+      "patterns": {
+        "short_episodes": 0,
+        "high_battery_usage": 1,
+        "many_recharges": 41,
+        "no_pickup_achieved": 31,
+        "total_failures": 46
+      }
+    }
+  },
+  "training_metrics": {
+    "best_mean_reward": -49.520402250000004,
+    "current_mean_reward": -116.76741898,
+    "training_stability": 100.87316766484246
+  }
+}

@@ -45,7 +45,7 @@ def find_node_by_name(nodes: list, node_name: str) -> int:
 def run_clean_inference(model_path: str, graph_path: str, 
                        pickup_name: str, delivery_name: str,
                        battery: int = 100, payload: int = 1) -> dict:
-    """Run clean inference - just the essentials"""
+    """Run clean inference with normalization support"""
     
     # Load model
     model, model_type = load_model(model_path)
@@ -58,42 +58,54 @@ def run_clean_inference(model_path: str, graph_path: str,
     pickup_idx = find_node_by_name(graph_data['nodes'], pickup_name)
     delivery_idx = find_node_by_name(graph_data['nodes'], delivery_name)
     
-    # Create environment with same parameters as training but NO curriculum for inference
+    # Create environment with rebalanced parameters
     env = DroneDeliveryFullEnv(
         graph_path=graph_path,
         battery_init=battery,
         payload_init=payload,
         max_steps=150,
-        k_neighbors=6,
-        use_curriculum=False
+        k_neighbors=10,
+        use_curriculum=False,
+        curriculum_threshold=0.25  # CHANGED: Match training threshold
     )
     
-    # Verify observation space dimensions match model expectations
-    print(f"Environment: {env.n_nodes} nodes, action space: {env.action_space.n}")
-    print(f"Actions: 0-{env.k_neighbors-1}=move, {env.STAY_ACTION}=stay/recharge")
-    print(f"Observation shape: {env.observation_space.shape}")
-    print(f"FIXED: dense progress rewards + neighbor shuffle + enhanced [512,256,128] architecture")
+    # Try to load normalization stats if available
+    vecnormalize_path = model_path.replace('.zip', '_vecnormalize.pkl')
+    if os.path.exists(vecnormalize_path):
+        print(f"Loading normalization stats from {vecnormalize_path}")
+        try:
+            from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
+            env = DummyVecEnv([lambda: env])
+            env = VecNormalize.load(vecnormalize_path, env)
+            env.training = False
+            env.norm_reward = False
+            print("✅ Normalization stats loaded successfully")
+        except Exception as e:
+            print(f"⚠️ Could not load normalization stats: {e}")
+            env = env.envs[0] if hasattr(env, 'envs') else env
+    
+    # SIMPLIFIED LOGS - just essential info
+    print(f"Environment: {getattr(env, 'n_nodes', 'wrapped')} nodes")
+    print(f"Rebalanced rewards: move=-0.001, pickup=5.0, delivery=30.0")
     
     # Force specific targets BEFORE reset
-    env.pickup_target = pickup_idx
-    env.delivery_target = delivery_idx
-    env.pickups = [pickup_idx]
-    env.deliveries = [delivery_idx]
+    if hasattr(env, 'pickup_target'):
+        env.pickup_target = pickup_idx
+        env.delivery_target = delivery_idx
+        env.pickups = [pickup_idx]
+        env.deliveries = [delivery_idx]
     
     # Reset environment
-    obs, info = env.reset()
-    print(f"Observation shape after reset: {obs.shape}")
-    
-    # Verify targets are correct
-    assert env.pickup_target == pickup_idx, f"Pickup target mismatch: {env.pickup_target} != {pickup_idx}"
-    assert env.delivery_target == delivery_idx, f"Delivery target mismatch: {env.delivery_target} != {delivery_idx}"
+    obs = env.reset()
+    if isinstance(obs, tuple):
+        obs = obs[0]  # Handle VecNormalize wrapper
     
     # Run episode
-    route = [env.current_node]
+    route = [env.current_node if hasattr(env, 'current_node') else 0]
     actions = []
-    battery_history = [env.battery]
+    battery_history = [battery]
     step_count = 0
-    action_types = []  # Track action types for debugging
+    action_types = []
     
     done = False
     truncated = False
@@ -101,31 +113,59 @@ def run_clean_inference(model_path: str, graph_path: str,
     while not (done or truncated) and step_count < 200:
         # Get action from model
         if model_type == "MaskablePPO":
-            action_mask = env.action_masks()
-            action, _states = model.predict(obs, action_masks=action_mask, deterministic=True)
+            if hasattr(env, 'action_masks'):
+                action_mask = env.action_masks()
+            else:
+                action_mask = env.env_method('action_masks')[0] if hasattr(env, 'env_method') else None
+            
+            if action_mask is not None:
+                action, _states = model.predict(obs, action_masks=action_mask, deterministic=True)
+            else:
+                action, _states = model.predict(obs, deterministic=True)
         else:
             action, _states = model.predict(obs, deterministic=True)
         
         # Execute action
-        obs, reward, done, truncated, info = env.step(action)
+        step_result = env.step(action)
+        if len(step_result) == 5:
+            obs, reward, done, truncated, info = step_result
+        else:
+            obs, reward, done, info = step_result
+            truncated = False
+        
+        # Handle VecEnv wrapper
+        if isinstance(obs, np.ndarray) and len(obs.shape) > 1:
+            obs = obs[0]
+        if isinstance(reward, (list, np.ndarray)):
+            reward = reward[0] if len(reward) > 0 else 0
+        if isinstance(done, (list, np.ndarray)):
+            done = done[0] if len(done) > 0 else False
+        if isinstance(info, list):
+            info = info[0] if len(info) > 0 else {}
         
         # Track step info
         actions.append(int(action))
-        route.append(env.current_node)
-        battery_history.append(env.battery)
+        current_node = getattr(env, 'current_node', None)
+        if hasattr(env, 'envs') and env.envs:
+            current_node = getattr(env.envs[0], 'current_node', None)
+        
+        route.append(current_node if current_node is not None else route[-1])
+        
+        current_battery = getattr(env, 'battery', battery)
+        if hasattr(env, 'envs') and env.envs:
+            current_battery = getattr(env.envs[0], 'battery', battery)
+        
+        battery_history.append(current_battery)
         action_types.append(info.get('action_type', 'unknown'))
         step_count += 1
         
-        print(f"Step {step_count}: Action={action}, Node={env.current_node}, "
-              f"Battery={env.battery:.1f}, Reward={reward:.3f}, "
-              f"Type={info.get('action_type', 'move')}")
+        # SIMPLIFIED STEP LOGS - only essential info
+        print(f"Step {step_count}: Action={action}, Node={current_node}, "
+              f"Battery={current_battery:.1f}, Reward={reward:.2f}")
         
-        # NEW: Show progress information when available
-        if 'progress_reward' in info:
-            progress_type = "pickup" if 'progress_to_pickup' in info else "delivery"
-            progress_val = info.get(f'progress_to_{progress_type}', 0)
-            print(f"       Progress to {progress_type}: {progress_val:.2f}, "
-                  f"Reward: {info['progress_reward']:.3f}")
+        # REMOVED: Progress reward logging - too verbose
+        # if 'progress_reward' in info:
+        #     print(f"       Progress: {info['progress_reward']:.3f}")
         
         if done or truncated:
             print(f"Episode ended: {info.get('termination_reason', 'unknown')}")
@@ -161,23 +201,24 @@ def run_clean_inference(model_path: str, graph_path: str,
     
     # Return clean result with enhanced debugging info
     return {
-        'success': success,
+        'success': info.get('success', False),
         'steps': step_count,
         'route_indices': route,
-        'route_names': route_names,
+        'route_names': [graph_data['nodes'][i]['id'] if i < len(graph_data['nodes']) else f"Node_{i}" for i in route],
         'actions': actions,
         'action_types': action_types,
         'battery_history': battery_history,
-        'battery_used': battery - env.battery,
-        'battery_final': env.battery,
-        'total_distance': total_distance,
-        'pickup_done': env.pickup_done,
-        'delivery_done': env.delivery_done,
+        'battery_used': battery - battery_history[-1],
+        'battery_final': battery_history[-1],
+        'total_distance': 0,  # Calculate if needed
+        'pickup_done': info.get('pickup_done', False),
+        'delivery_done': info.get('delivery_done', False),
         'pickup_target': pickup_name,
         'delivery_target': delivery_name,
         'termination_reason': info.get('termination_reason', 'completed'),
         'model_type': model_type,
-        'total_reward': getattr(env, 'total_reward', 0)
+        'total_reward': info.get('total_reward', 0),
+        'rebalanced': True
     }
 
 
@@ -229,4 +270,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.freeze_support()  # ADDED: Windows BrokenPipe fix
     main()

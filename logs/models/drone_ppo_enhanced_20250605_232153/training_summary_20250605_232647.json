@@ -1,0 +1,13 @@
+{
+  "training_completed": false,
+  "total_timesteps": 604984,
+  "training_time_hours": 0.0787207277615865,
+  "best_mean_reward": -49.520402250000004,
+  "final_metrics": {
+    "mean_reward": -111.591523274,
+    "std_reward": 94.71717705270139,
+    "success_rate": 0.14,
+    "mean_episode_length": 150.0
+  },
+  "total_episodes": 1000
+}

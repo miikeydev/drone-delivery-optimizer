@@ -1,0 +1,106 @@
+{
+  "timestamp": "20250605_232553",
+  "total_timesteps": 490000,
+  "recent_episodes_count": 50,
+  "success_rate": 0.2,
+  "successful_episodes": {
+    "count": 10,
+    "avg_reward": 93.37570450000001,
+    "avg_length": 150.0,
+    "avg_battery_used": 6.4387814175182685,
+    "best_routes": [
+      {
+        "reward": 163.447277,
+        "length": 150,
+        "timestep": 483600,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 10,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 149.894339,
+        "length": 150,
+        "timestep": 487200,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 11,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 146.140936,
+        "length": 150,
+        "timestep": 489600,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 9,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 119.977494,
+        "length": 150,
+        "timestep": 487200,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 10,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 116.759421,
+        "length": 150,
+        "timestep": 488400,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 6,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      }
+    ]
+  },
+  "failed_episodes": {
+    "count": 40,
+    "avg_reward": -139.123947575,
+    "avg_length": 150.0,
+    "failure_patterns": {
+      "termination_reasons": {
+        "max_steps_reached": 40
+      },
+      "patterns": {
+        "short_episodes": 0,
+        "high_battery_usage": 2,
+        "many_recharges": 36,
+        "no_pickup_achieved": 14,
+        "total_failures": 40
+      }
+    }
+  },
+  "training_metrics": {
+    "best_mean_reward": -49.520402250000004,
+    "current_mean_reward": -110.429925324,
+    "training_stability": 105.61886878290731
+  }
+}
