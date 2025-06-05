@@ -36,31 +36,10 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from env import DroneDeliveryFullEnv
 
 
-class ActionMaskerWrapper:
-    """Wrapper to provide action masking for MaskablePPO"""
-    def __init__(self, env):
-        self.env = env
-        
-    def mask_fn(self, env):
-        # Handle wrapped environments by finding the underlying environment
-        unwrapped_env = env
-        while hasattr(unwrapped_env, 'env') and not hasattr(unwrapped_env, 'action_masks'):
-            unwrapped_env = unwrapped_env.env
-        
-        if hasattr(unwrapped_env, 'action_masks'):
-            return unwrapped_env.action_masks()
-        else:
-            # Fallback to allowing all actions
-            return np.ones(unwrapped_env.action_space.n, dtype=bool)
-    
-    def __getattr__(self, name):
-        return getattr(self.env, name)
-
-
 def make_env(graph_path: str, battery_init: int, payload_init: int, rank: int = 0,
              randomize_battery: bool = False, battery_range: tuple = (60, 100),
              randomize_payload: bool = False, payload_range: tuple = (1, 5),
-             use_masking: bool = False):
+             use_masking: bool = False, use_curriculum: bool = True):
     """Create environment factory for vectorization"""
     def _init():
         env = DroneDeliveryFullEnv(
@@ -70,16 +49,20 @@ def make_env(graph_path: str, battery_init: int, payload_init: int, rank: int = 
             randomize_battery=randomize_battery,
             battery_range=battery_range,
             randomize_payload=randomize_payload,
-            payload_range=payload_range
+            payload_range=payload_range,
+            use_curriculum=use_curriculum,
+            curriculum_threshold=0.7  # 70% success rate to advance
         )
         
         # Set seed on the base environment first
         env.seed(rank)
         
-        # Add action masking BEFORE monitoring if requested and available
+        # FIXED: Simplified action masking - only wrap if requested and available
         if use_masking and MASKABLE_PPO_AVAILABLE:
-            wrapper = ActionMaskerWrapper(env)
-            env = ActionMasker(env, wrapper.mask_fn)
+            # Use the built-in ActionMasker from sb3_contrib directly
+            def mask_fn(env_instance):
+                return env_instance.action_masks()
+            env = ActionMasker(env, mask_fn)
         
         # Add monitoring AFTER action masking
         env = Monitor(env)
@@ -102,7 +85,7 @@ class TrainingMetricsCallback(BaseCallback):
         # Create log directory
         os.makedirs(log_dir, exist_ok=True)
         
-        # Metrics tracking
+        # Metrics tracking with higher expected rewards
         self.episode_rewards = deque(maxlen=1000)
         self.episode_lengths = deque(maxlen=1000)
         self.success_rates = deque(maxlen=100)
@@ -110,7 +93,7 @@ class TrainingMetricsCallback(BaseCallback):
         self.recharge_counts = deque(maxlen=1000)
         self.invalid_actions = deque(maxlen=1000)
         
-        # Training progress
+        # Training progress with higher baseline
         self.start_time = time.time()
         self.best_mean_reward = -float('inf')
         self.training_interrupted = False
@@ -141,11 +124,11 @@ class TrainingMetricsCallback(BaseCallback):
                 self.episode_rewards.append(ep_info['r'])
                 self.episode_lengths.append(ep_info['l'])
                 
-                # Extract additional metrics if available
+                # Extract additional metrics if available - FIXED to use NET battery
                 if 'success' in info:
                     self.success_rates.append(1.0 if info['success'] else 0.0)
-                if 'battery_used' in info:
-                    self.battery_usage.append(info['battery_used'])
+                if 'battery_used_net' in info:  # CHANGED from 'battery_used' to 'battery_used_net'
+                    self.battery_usage.append(info['battery_used_net'])
                 if 'recharge_count' in info:
                     self.recharge_counts.append(info['recharge_count'])
                 if 'invalid_action_count' in info:
@@ -157,14 +140,16 @@ class TrainingMetricsCallback(BaseCallback):
                     'length': ep_info['l'],
                     'timestep': self.num_timesteps,
                     'success': info.get('success', False),
-                    'battery_used': info.get('battery_used', 0),
+                    'battery_used': info.get('battery_used_net', 0),  # Use NET battery
                     'recharge_count': info.get('recharge_count', 0),
                     'route_description': info.get('route_description', 'Unknown'),
                     'pickup_done': info.get('pickup_done', False),
                     'delivery_done': info.get('delivery_done', False),
-                    'termination_reason': info.get('termination_reason', 'unknown')
+                    'termination_reason': info.get('termination_reason', 'unknown'),
+                    'curriculum_level': info.get('curriculum_level', 0),
+                    'pair_distance': info.get('pair_distance', 0)
                 })
-        
+    
         # Log metrics every check_freq steps
         if self.num_timesteps % self.check_freq == 0:
             self._log_metrics()
@@ -176,18 +161,24 @@ class TrainingMetricsCallback(BaseCallback):
         return True
     
     def _log_metrics(self):
-        """Log current training metrics"""
+        """Log current training metrics with massive delivery reward scale"""
         if len(self.episode_rewards) == 0:
             return
         
         # Calculate metrics
         mean_reward = np.mean(self.episode_rewards)
-        std_reward = np.std(self.episode_rewards)
         mean_length = np.mean(self.episode_lengths)
         success_rate = np.mean(self.success_rates) if self.success_rates else 0.0
         mean_battery = np.mean(self.battery_usage) if self.battery_usage else 0.0
         mean_recharges = np.mean(self.recharge_counts) if self.recharge_counts else 0.0
-        mean_invalid = np.mean(self.invalid_actions) if self.invalid_actions else 0.0
+        
+        # Mission progress rates
+        pickup_success_rate = len([ep for ep in self.recent_episodes if ep.get('pickup_done', False)]) / max(len(self.recent_episodes), 1)
+        delivery_success_rate = len([ep for ep in self.recent_episodes if ep.get('delivery_done', False)]) / max(len(self.recent_episodes), 1)
+        
+        # Curriculum metrics
+        curriculum_levels = [ep.get('curriculum_level', 0) for ep in self.recent_episodes if 'curriculum_level' in ep]
+        avg_curriculum_level = np.mean(curriculum_levels) if curriculum_levels else 0
         
         # Update best reward
         if mean_reward > self.best_mean_reward:
@@ -197,28 +188,29 @@ class TrainingMetricsCallback(BaseCallback):
         elapsed_time = time.time() - self.start_time
         steps_per_sec = self.num_timesteps / elapsed_time
         
-        # Log to console
-        print(f"\n📊 Training Metrics [Step {self.num_timesteps:,}]")
-        print(f"  Reward: {mean_reward:.3f} ± {std_reward:.3f} (best: {self.best_mean_reward:.3f})")
-        print(f"  Episode Length: {mean_length:.1f}")
-        print(f"  Success Rate: {success_rate:.1%}")
-        print(f"  Battery Usage: {mean_battery:.1f}")
-        print(f"  Avg Recharges: {mean_recharges:.1f}")
-        print(f"  Invalid Actions: {mean_invalid:.1f}")
-        print(f"  Training Speed: {steps_per_sec:.1f} steps/sec")
-        print(f"  Elapsed Time: {elapsed_time/3600:.1f}h")
+        # ENHANCED LOGGING with delivery reward context
+        print(f"[{self.num_timesteps:>9}] "
+              f"R={mean_reward:>8.1f} ({self.best_mean_reward:>8.1f})  "  # Wider format for higher rewards
+              f"Success={success_rate:>5.1%}  "
+              f"Pickup={pickup_success_rate:>5.1%}  "
+              f"Delivery={delivery_success_rate:>5.1%}  "
+              f"Recharge={mean_recharges:>4.1f}  "
+              f"Battery={mean_battery:>5.1f}%  "
+              f"Len={mean_length:>5.1f}/150  "
+              f"Level={avg_curriculum_level:>3.1f}  "
+              f"Speed={steps_per_sec:>4.0f}/s")
         
-        # Log to tensorboard
-        if hasattr(self.training_env, 'get_attr'):
-            self.logger.record('metrics/mean_reward', mean_reward)
-            self.logger.record('metrics/std_reward', std_reward)
-            self.logger.record('metrics/mean_episode_length', mean_length)
-            self.logger.record('metrics/success_rate', success_rate)
-            self.logger.record('metrics/mean_battery_usage', mean_battery)
-            self.logger.record('metrics/mean_recharges', mean_recharges)
-            self.logger.record('metrics/mean_invalid_actions', mean_invalid)
-            self.logger.record('metrics/steps_per_second', steps_per_sec)
-    
+        # Show specific improvements with delivery context
+        if len(self.recharge_counts) >= 100:
+            recent_recharges = np.mean(list(self.recharge_counts)[-50:])
+            if recent_recharges < 2.0:
+                print(f"          Recharge efficiency: {recent_recharges:.2f} avg (target <2.0)")
+        
+        # Show delivery reward achievement
+        if success_rate > 0.1:  # If more than 10% success
+            avg_successful_reward = np.mean([ep['reward'] for ep in self.recent_episodes if ep.get('success', False)])
+            print(f"          Successful deliveries: avg reward {avg_successful_reward:.1f} (includes +200 delivery bonus)")
+
     def _save_detailed_analysis(self):
         """Save detailed training analysis"""
         if not self.recent_episodes:
@@ -337,44 +329,42 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
                         save_path: str = "models/drone_ppo_masked",
                         randomize_battery: bool = False, battery_range: tuple = (60, 100),
                         randomize_payload: bool = False, payload_range: tuple = (1, 5),
-                        use_masking: bool = True):
-    """Train PPO/MaskablePPO agent with comprehensive logging"""
+                        use_masking: bool = True, use_curriculum: bool = True):
+    """Train PPO/MaskablePPO agent with curriculum learning"""
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"{save_path}_{timestamp}"
     
-    print("🚁 Starting Enhanced Drone Delivery Training")
+    print("Drone Delivery Training - Anti-Spam Recharge System")
     print("=" * 60)
     print(f"Algorithm: {'MaskablePPO' if use_masking and MASKABLE_PPO_AVAILABLE else 'PPO'}")
     print(f"Graph: {graph_path}")
-    print(f"Battery: {battery_init} {'(randomized ' + str(battery_range) + ')' if randomize_battery else ''}")
-    print(f"Payload: {payload_init} {'(randomized ' + str(payload_range) + ')' if randomize_payload else ''}")
-    print(f"Total timesteps: {total_timesteps:,}")
-    print(f"Parallel environments: {n_envs}")
-    print(f"Action masking: {use_masking and MASKABLE_PPO_AVAILABLE}")
-    print(f"Run name: {run_name}")
+    print(f"Battery: {battery_init}, Payload: {payload_init}")
+    print(f"Curriculum: {'Enabled' if use_curriculum else 'Disabled'}")
+    print(f"Timesteps: {total_timesteps:,}, Envs: {n_envs}")
+    print(f"Run: {run_name}")
     print("=" * 60)
     
     # Create directories
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     
-    # Create vectorized environment
+    # Create vectorized environment with curriculum
     if n_envs > 1:
         env = SubprocVecEnv([
             make_env(graph_path, battery_init, payload_init, i,
                     randomize_battery, battery_range,
-                    randomize_payload, payload_range, use_masking) 
+                    randomize_payload, payload_range, use_masking, use_curriculum) 
             for i in range(n_envs)
         ])
     else:
         env = DummyVecEnv([
             make_env(graph_path, battery_init, payload_init, 0,
                     randomize_battery, battery_range,
-                    randomize_payload, payload_range, use_masking)
+                    randomize_payload, payload_range, use_masking, use_curriculum)
         ])
     
-    # Create evaluation environment
+    # Create evaluation environment with curriculum
     eval_env = DroneDeliveryFullEnv(
         graph_path=graph_path,
         battery_init=battery_init,
@@ -382,13 +372,14 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
         randomize_battery=randomize_battery,
         battery_range=battery_range,
         randomize_payload=randomize_payload,
-        payload_range=payload_range
+        payload_range=payload_range,
+        use_curriculum=use_curriculum
     )
     eval_env = Monitor(eval_env)
     
-    # Choose algorithm and hyperparameters
+    # Choose algorithm and hyperparameters - ENHANCED ANTI-SPAM + BETTER ARCHITECTURE
     if use_masking and MASKABLE_PPO_AVAILABLE:
-        # MaskablePPO with optimized hyperparameters
+        # MaskablePPO with ENHANCED hyperparameters and architecture
         model = MaskablePPO(
             "MlpPolicy",
             env,
@@ -396,17 +387,24 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
             n_steps=2048,
             batch_size=256,
             n_epochs=10,
-            gamma=0.99,
+            gamma=0.997,          # INCREASED from 0.995 to 0.997 - even more long-term focus
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.01,
+            ent_coef=0.03,        # INCREASED from 0.02 to 0.03 - more exploration to find alternatives to recharge
             vf_coef=0.5,
             max_grad_norm=0.5,
             verbose=1,
-            tensorboard_log=f"./logs/{run_name}/"
+            tensorboard_log=f"./logs/{run_name}/",
+            # NEW: Enhanced network architecture for 470-dimensional observation space
+            policy_kwargs=dict(
+                net_arch=[512, 256, 128],  # Increased capacity for better feature extraction
+                activation_fn=torch.nn.ReLU,
+                ortho_init=False
+            )
         )
+        print(f"🧠 Enhanced Architecture: [512, 256, 128] + gamma=0.997, ent_coef=0.03 (anti-ping-pong)")
     else:
-        # Regular PPO
+        # Regular PPO with same improvements
         model = PPO(
             "MlpPolicy",
             env,
@@ -414,15 +412,22 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
             n_steps=2048,
             batch_size=256,
             n_epochs=10,
-            gamma=0.99,
+            gamma=0.997,          # INCREASED
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.01,
+            ent_coef=0.03,        # INCREASED
             vf_coef=0.5,
             max_grad_norm=0.5,
             verbose=1,
-            tensorboard_log=f"./logs/{run_name}/"
+            tensorboard_log=f"./logs/{run_name}/",
+            # NEW: Enhanced network architecture
+            policy_kwargs=dict(
+                net_arch=[512, 256, 128],  # Increased capacity
+                activation_fn=torch.nn.ReLU,
+                ortho_init=False
+            )
         )
+        print(f"🧠 Enhanced Architecture: [512, 256, 128] + gamma=0.997, ent_coef=0.03 (anti-ping-pong)")
     
     # Set up callbacks
     metrics_callback = TrainingMetricsCallback(
@@ -503,13 +508,22 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
                 'n_steps': 2048,
                 'batch_size': 256,
                 'n_epochs': 10,
-                'gamma': 0.99,
+                'gamma': 0.997,  # UPDATED
                 'gae_lambda': 0.95,
                 'clip_range': 0.2,
-                'ent_coef': 0.01,
+                'ent_coef': 0.03,  # UPDATED
                 'vf_coef': 0.5,
-                'max_grad_norm': 0.5
-            }
+                'max_grad_norm': 0.5,
+                'net_arch': [512, 256, 128]  # NEW
+            },
+            'use_curriculum': use_curriculum,
+            'curriculum_threshold': 0.7,
+            'fixes_applied': [
+                'dense_progress_rewards',
+                'neighbor_shuffle_symmetry_breaking', 
+                'enhanced_network_architecture',
+                'anti_pingpong_penalties'
+            ]
         }
         
         metadata_path = f"./models/{run_name}_final_metadata.json"
@@ -526,7 +540,7 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train PPO/MaskablePPO for drone delivery with enhanced logging")
+    parser = argparse.ArgumentParser(description="Train PPO/MaskablePPO for drone delivery with curriculum learning")
     parser.add_argument("--graph", type=str, required=True, help="Path to graph JSON file")
     parser.add_argument("--battery", type=int, default=100, help="Initial battery level")
     parser.add_argument("--payload", type=int, default=1, help="Initial payload")
@@ -542,6 +556,7 @@ def main():
     parser.add_argument("--payload-min", type=int, help="Minimum payload (alternative to --payload-range)")
     parser.add_argument("--payload-max", type=int, help="Maximum payload (alternative to --payload-range)")
     parser.add_argument("--no-masking", action="store_true", help="Disable action masking (use regular PPO)")
+    parser.add_argument("--no-curriculum", action="store_true", help="Disable curriculum learning")
     parser.add_argument("--save", type=str, help="Alternative save path (shorter alias)")
     
     args = parser.parse_args()
@@ -572,7 +587,7 @@ def main():
     # Convert to absolute paths
     graph_path = os.path.abspath(args.graph)
     
-    # Train model
+    # Train model with curriculum
     model, run_name = train_drone_delivery(
         graph_path=graph_path,
         battery_init=args.battery,
@@ -584,7 +599,8 @@ def main():
         battery_range=tuple(battery_range),
         randomize_payload=args.randomize_payload,
         payload_range=tuple(payload_range),
-        use_masking=not args.no_masking
+        use_masking=not args.no_masking,
+        use_curriculum=not args.no_curriculum
     )
     
     print(f"\n🎉 Training session '{run_name}' completed!")

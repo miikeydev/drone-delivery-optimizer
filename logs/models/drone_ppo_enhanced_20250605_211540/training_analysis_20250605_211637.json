@@ -1,0 +1,78 @@
+{
+  "timestamp": "20250605_211637",
+  "total_timesteps": 130000,
+  "recent_episodes_count": 50,
+  "success_rate": 0.06,
+  "successful_episodes": {
+    "count": 3,
+    "avg_reward": 206.55000000000004,
+    "avg_length": 150.0,
+    "avg_battery_used": 0.0,
+    "best_routes": [
+      {
+        "reward": 206.55,
+        "length": 150,
+        "timestep": 123600,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 5,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 206.55,
+        "length": 150,
+        "timestep": 124800,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 5,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 206.55,
+        "length": 150,
+        "timestep": 126000,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 5,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      }
+    ]
+  },
+  "failed_episodes": {
+    "count": 47,
+    "avg_reward": -27.166170212765962,
+    "avg_length": 150.0,
+    "failure_patterns": {
+      "termination_reasons": {
+        "max_steps_reached": 47
+      },
+      "patterns": {
+        "short_episodes": 0,
+        "high_battery_usage": 2,
+        "many_recharges": 33,
+        "no_pickup_achieved": 33,
+        "total_failures": 47
+      }
+    }
+  },
+  "training_metrics": {
+    "best_mean_reward": -6.387499999999997,
+    "current_mean_reward": -9.714999999999998,
+    "training_stability": 69.14310600276792
+  }
+}

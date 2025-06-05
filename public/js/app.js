@@ -435,10 +435,14 @@ async function generateNetwork() {
         index: index
       })),
       edges: allEdges.map(edge => ({
-        u: edge.source,
-        v: edge.target,
-        dist: edge.distance,
-        cost: edge.cost
+        u: edge.source,        // 🔧 FIXED: Keep frontend format for compatibility
+        v: edge.target,        // 🔧 FIXED: Keep frontend format for compatibility  
+        dist: edge.distance,   // 🔧 FIXED: Keep frontend format for compatibility
+        cost: edge.cost,
+        // Also include training format for backward compatibility
+        source: edge.source,
+        target: edge.target,
+        distance: edge.distance
       }))
     };
     
@@ -484,75 +488,112 @@ if (algoToggle && algoOptions.length) {
   });
 }
 
-// --- Run button logic ---
+// --- Clean run algorithm function ---
 function runAlgorithm() {
   const algorithm = document.querySelector('.algorithm-toggle').getAttribute('data-selected');
   const batteryCapacity = window.batteryCapacity;
   const maxPayload = window.maxPayload;
   
-  // Get start and end nodes from the draggable pins
-  const startNode = pickupNodeId || 'Pickup 1';
-  const endNode = deliveryNodeId || 'Delivery 1';
+  // Get selected nodes (must be set)
+  if (!pickupNodeId || !deliveryNodeId) {
+    alert('Please select both pickup and delivery points first!');
+    return;
+  }
   
-  console.log(`Running ${algorithm} from ${startNode} to ${endNode}`);
+  console.log(`🚁 Running ${algorithm}: ${pickupNodeId} -> ${deliveryNodeId}`);
   
-  // Show loading state
+  // Show loading
   const runButton = document.getElementById('run-algo');
-  const originalText = runButton.innerHTML;
-  runButton.innerHTML = `
-    <svg viewBox="0 0 24 24" width="26" height="26" style="vertical-align:middle;animation:spin 1s linear infinite;">
-      <circle cx="12" cy="12" r="10" fill="none" stroke="#666" stroke-width="2"/>
-      <path d="M22 12A10 10 0 0 0 12 2" stroke="#333" stroke-width="2" fill="none"/>
-    </svg>
-  `;
   runButton.disabled = true;
+  runButton.innerHTML = '⏳';
   
-  // Clear any existing route visualization
+  // Clear previous route
   clearRouteVisualization();
   
-  // Send request to server
-  fetch('/api/run-algorithm', {
+  // Choose endpoint based on algorithm
+  const endpoint = algorithm === 'ppo' ? '/api/run-ppo-inference' : '/api/run-algorithm';
+  const requestBody = algorithm === 'ppo' ? {
+    pickupNode: pickupNodeId,
+    deliveryNode: deliveryNodeId,
+    batteryCapacity,
+    maxPayload
+  } : {
+    algorithm,
+    batteryCapacity,
+    maxPayload,
+    startNode: pickupNodeId,
+    endNode: deliveryNodeId
+  };
+  
+  // API call
+  fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      algorithm,
-      batteryCapacity,
-      maxPayload,
-      startNode,
-      endNode
-    })
+    body: JSON.stringify(requestBody)
   })
   .then(response => response.json())
   .then(data => {
-    console.log('Algorithm result:', data);
-    
-    if (data.status === 'success' || data.stats?.success) {
-      // Show success message
-      const routeStr = data.route.join(' → ');
-      const message = `🎉 Success!\n\nRoute: ${routeStr}\nSteps: ${data.stats.steps}\nDistance: ${data.stats.distance.toFixed(1)} km\nBattery used: ${data.stats.batteryUsed.toFixed(1)}%\nRecharges: ${data.stats.recharges || 0}`;
+    if (data.status === 'success') {
+      // Handle different response formats
+      const stats = data.stats || data.result;
+      const routeIndices = data.route_indices || data.result?.route_indices;
+      const routeNames = data.route_names || data.result?.route_names;
+      const batteryHistory = data.battery_history || data.result?.battery_history;
       
-      alert(message);
+      if (stats?.success) {
+        // Success!
+        const successMsg = `✅ Success!\nSteps: ${stats.steps}\nBattery used: ${stats.batteryUsed || stats.battery_used}%\nRoute: ${(routeNames || []).join(' → ')}`;
+        alert(successMsg);
+        
+        // Visualize route with enhanced info for PPO
+        if (routeIndices && routeIndices.length > 0) {
+          if (algorithm === 'ppo' && data.actions) {
+            // Enhanced visualization for PPO with action info
+            visualizeRoute(routeIndices, batteryHistory, {
+              actions: data.actions,
+              actionTypes: data.action_types,
+              algorithm: 'PPO',
+              modelType: data.result?.model_type
+            });
+          } else {
+            // Standard visualization
+            visualizeRoute(routeIndices, batteryHistory);
+          }
+        }
+      } else {
+        // Failed
+        const failMsg = `❌ Mission failed!\nReason: ${stats?.termination_reason || data.message}\nSteps: ${stats?.steps || 0}`;
+        alert(failMsg);
+        
+        // Still visualize partial route if available
+        if (routeIndices && routeIndices.length > 1) {
+          visualizeRoute(routeIndices, batteryHistory, { failed: true });
+        }
+      }
+    } else {
+      // Error - Show helpful message for PPO
+      let errorMsg = `❌ ${algorithm.toUpperCase()} execution failed!\n${data.message || 'Unknown error'}`;
       
-      // Visualize route on map
-      if (data.route_indices && data.route_indices.length > 0) {
-        visualizeRoute(data.route_indices, data.battery_history || []);
+      if (algorithm === 'ppo' && data.help) {
+        errorMsg += `\n\n💡 Solution: ${data.help}`;
       }
       
-    } else if (data.status === 'training') {
-      alert('PPO model is training. This may take several minutes. Please try again later.');
-    } else {
-      const failureReason = data.stats?.termination_reason || 'unknown';
-      alert(`❌ Mission Failed!\n\nReason: ${failureReason}\nSteps taken: ${data.stats?.steps || 0}\nBattery remaining: ${(100 - (data.stats?.batteryUsed || 0)).toFixed(1)}%`);
+      if (data.searched_paths) {
+        console.log('Searched model paths:', data.searched_paths);
+      }
+      
+      alert(errorMsg);
+      console.error('Algorithm error:', data);
     }
   })
   .catch(error => {
-    console.error('Algorithm error:', error);
-    alert('Algorithm execution failed. Check console for details.');
+    console.error('Error:', error);
+    alert(`Algorithm execution failed!\n${error.message}`);
   })
   .finally(() => {
-    // Restore button state
-    runButton.innerHTML = originalText;
+    // Restore button
     runButton.disabled = false;
+    runButton.innerHTML = '▶️';
   });
 }
 
@@ -566,7 +607,7 @@ function clearRouteVisualization() {
   }
 }
 
-function visualizeRoute(routeIndices, batteryHistory = []) {
+function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}) {
   // Clear any existing route
   clearRouteVisualization();
   
@@ -587,12 +628,16 @@ function visualizeRoute(routeIndices, batteryHistory = []) {
   }).filter(coord => coord !== null);
   
   if (routeCoords.length > 1) {
+    // Choose color based on success/failure
+    const routeColor = extraInfo.failed ? '#ff4757' : (extraInfo.algorithm === 'PPO' ? '#3742fa' : '#ff6b35');
+    const dashPattern = extraInfo.failed ? '5, 10' : (extraInfo.algorithm === 'PPO' ? '15, 5' : '10, 5');
+    
     // Draw the main route line
     const routeLine = L.polyline(routeCoords, {
-      color: '#ff6b35',
-      weight: 6,
+      color: routeColor,
+      weight: extraInfo.algorithm === 'PPO' ? 8 : 6,
       opacity: 0.8,
-      dashArray: '10, 5'
+      dashArray: dashPattern
     }).addTo(routeLayer);
     
     // Add arrows to show direction
@@ -602,9 +647,9 @@ function visualizeRoute(routeIndices, batteryHistory = []) {
           offset: 25,
           repeat: 50,
           symbol: L.Symbol.arrowHead({
-            pixelSize: 12,
+            pixelSize: extraInfo.algorithm === 'PPO' ? 14 : 12,
             polygon: true,
-            pathOptions: { color: '#ff6b35', fillOpacity: 0.8 }
+            pathOptions: { color: routeColor, fillOpacity: 0.8 }
           })
         }
       ]
@@ -622,37 +667,70 @@ function visualizeRoute(routeIndices, batteryHistory = []) {
         else if (battery < 60) markerColor = '#FF9800'; // Orange
         
         const stepMarker = L.circleMarker([node.lat, node.lng], {
-          radius: 8,
+          radius: extraInfo.algorithm === 'PPO' ? 10 : 8,
           fillColor: markerColor,
           color: '#fff',
           weight: 2,
           fillOpacity: 0.9
         }).addTo(routeLayer);
         
-        // Add popup with step info
-        stepMarker.bindPopup(`
+        // Enhanced popup with PPO-specific info
+        let popupContent = `
           <b>Step ${stepIdx + 1}</b><br>
           Node: ${node.id}<br>
           Type: ${node.type}<br>
           Battery: ${battery.toFixed(1)}%
-        `);
+        `;
+        
+        if (extraInfo.actions && extraInfo.actionTypes) {
+          const action = extraInfo.actions[stepIdx];
+          const actionType = extraInfo.actionTypes[stepIdx];
+          popupContent += `<br>Action: ${action} (${actionType})`;
+        }
+        
+        if (extraInfo.algorithm === 'PPO') {
+          popupContent += `<br><small>Model: ${extraInfo.modelType || 'PPO'}</small>`;
+        }
+        
+        stepMarker.bindPopup(popupContent);
         
         // Add step number label
         const stepLabel = L.divIcon({
-          html: `<div style="color: white; font-weight: bold; font-size: 10px; text-align: center; line-height: 16px;">${stepIdx + 1}</div>`,
+          html: `<div style="color: white; font-weight: bold; font-size: ${extraInfo.algorithm === 'PPO' ? '12px' : '10px'}; text-align: center; line-height: ${extraInfo.algorithm === 'PPO' ? '20px' : '16px'};">${stepIdx + 1}</div>`,
           className: 'step-number-label',
-          iconSize: [16, 16]
+          iconSize: extraInfo.algorithm === 'PPO' ? [20, 20] : [16, 16]
         });
         
         L.marker([node.lat, node.lng], { icon: stepLabel }).addTo(routeLayer);
       }
     });
     
+    // Add algorithm badge
+    if (extraInfo.algorithm) {
+      const algorithmBadge = L.control({ position: 'topright' });
+      algorithmBadge.onAdd = function() {
+        const div = L.DomUtil.create('div', 'algorithm-badge');
+        div.innerHTML = `
+          <div style="background: ${routeColor}; color: white; padding: 8px 12px; border-radius: 20px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+            ${extraInfo.algorithm} Route
+            ${extraInfo.failed ? ' (Failed)' : ' (Success)'}
+          </div>
+        `;
+        return div;
+      };
+      algorithmBadge.addTo(map);
+      
+      // Remove badge after 5 seconds
+      setTimeout(() => {
+        map.removeControl(algorithmBadge);
+      }, 5000);
+    }
+    
     // Zoom to route bounds
     const group = new L.featureGroup(routeLayer.getLayers());
     map.fitBounds(group.getBounds().pad(0.1));
     
-    console.log(`Route visualized: ${routeIndices.length} steps`);
+    console.log(`${extraInfo.algorithm || 'Route'} visualized: ${routeIndices.length} steps`);
   }
 }
 

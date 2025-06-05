@@ -1,0 +1,78 @@
+{
+  "timestamp": "20250605_214418",
+  "total_timesteps": 140000,
+  "recent_episodes_count": 50,
+  "success_rate": 0.06,
+  "successful_episodes": {
+    "count": 3,
+    "avg_reward": 102.241832,
+    "avg_length": 150.0,
+    "avg_battery_used": 0.0,
+    "best_routes": [
+      {
+        "reward": 141.791802,
+        "length": 150,
+        "timestep": 139200,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 8,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 95.55612,
+        "length": 150,
+        "timestep": 139200,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 9,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      },
+      {
+        "reward": 69.377574,
+        "length": 150,
+        "timestep": 135600,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 10,
+        "route_description": "Unknown",
+        "pickup_done": true,
+        "delivery_done": true,
+        "termination_reason": "max_steps_reached",
+        "curriculum_level": 0,
+        "pair_distance": 0
+      }
+    ]
+  },
+  "failed_episodes": {
+    "count": 47,
+    "avg_reward": -147.73257414893615,
+    "avg_length": 150.0,
+    "failure_patterns": {
+      "termination_reasons": {
+        "max_steps_reached": 47
+      },
+      "patterns": {
+        "short_episodes": 0,
+        "high_battery_usage": 0,
+        "many_recharges": 44,
+        "no_pickup_achieved": 24,
+        "total_failures": 47
+      }
+    }
+  },
+  "training_metrics": {
+    "best_mean_reward": -93.31698278125,
+    "current_mean_reward": -110.5455828825431,
+    "training_stability": 78.44998187961555
+  }
+}
