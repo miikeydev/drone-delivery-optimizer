@@ -1,0 +1,33 @@
+{
+  "algorithm": "MaskablePPO",
+  "graph_path": "C:\\dev\\NodeJS\\drone-delivery-optimizer\\data\\graph.json",
+  "battery_init": 100,
+  "payload_init": 1,
+  "total_timesteps": 500000,
+  "n_envs": 8,
+  "randomize_battery": true,
+  "battery_range": [
+    60,
+    100
+  ],
+  "randomize_payload": true,
+  "payload_range": [
+    1,
+    5
+  ],
+  "use_masking": true,
+  "training_time_hours": 0.0002268834908803304,
+  "timestamp": "20250605_163014",
+  "hyperparameters": {
+    "learning_rate": 0.0003,
+    "n_steps": 2048,
+    "batch_size": 256,
+    "n_epochs": 10,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.01,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "timestamp": "20250605_163157",
+  "total_timesteps": 10000,
+  "recent_episodes_count": 50,
+  "success_rate": 0.0,
+  "successful_episodes": {
+    "count": 0,
+    "avg_reward": 0,
+    "avg_length": 0,
+    "avg_battery_used": 0,
+    "best_routes": []
+  },
+  "failed_episodes": {
+    "count": 50,
+    "avg_reward": -1.40713764,
+    "avg_length": 3.38,
+    "failure_patterns": {
+      "termination_reasons": {
+        "invalid_action": 50
+      },
+      "patterns": {
+        "short_episodes": 50,
+        "high_battery_usage": 0,
+        "many_recharges": 0,
+        "no_pickup_achieved": 50,
+        "total_failures": 50
+      }
+    }
+  },
+  "training_metrics": {
+    "best_mean_reward": -1.246218885,
+    "current_mean_reward": -1.270675804,
+    "training_stability": 0.5015782886612095
+  }
+}

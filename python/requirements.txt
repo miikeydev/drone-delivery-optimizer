@@ -1,7 +1,8 @@
-gym==0.21.0
-stable-baselines3==1.8.0
-shimmy>=2.0
-torch>=1.11.0
+# filepath: c:\dev\NodeJS\drone-delivery-optimizer\python\requirements.txt
+gymnasium>=0.28.0
+stable-baselines3>=2.0.0
+sb3-contrib>=2.0.0
+torch>=1.13.0
 numpy>=1.21.0
 matplotlib>=3.5.0
 tensorboard>=2.8.0

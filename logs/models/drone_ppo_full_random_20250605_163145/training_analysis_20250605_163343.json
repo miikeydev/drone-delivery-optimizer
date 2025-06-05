@@ -1,0 +1,96 @@
+{
+  "timestamp": "20250605_163343",
+  "total_timesteps": 210000,
+  "recent_episodes_count": 50,
+  "success_rate": 0.98,
+  "successful_episodes": {
+    "count": 49,
+    "avg_reward": 1.8376080204081635,
+    "avg_length": 4.326530612244898,
+    "avg_battery_used": 0.0,
+    "best_routes": [
+      {
+        "reward": 1.861596,
+        "length": 4,
+        "timestep": 209808,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 0,
+        "route_description": "Unknown",
+        "pickup_done": false,
+        "delivery_done": false,
+        "termination_reason": "mission_completed"
+      },
+      {
+        "reward": 1.861596,
+        "length": 4,
+        "timestep": 209824,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 0,
+        "route_description": "Unknown",
+        "pickup_done": false,
+        "delivery_done": false,
+        "termination_reason": "mission_completed"
+      },
+      {
+        "reward": 1.861596,
+        "length": 4,
+        "timestep": 209840,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 0,
+        "route_description": "Unknown",
+        "pickup_done": false,
+        "delivery_done": false,
+        "termination_reason": "mission_completed"
+      },
+      {
+        "reward": 1.861596,
+        "length": 4,
+        "timestep": 209872,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 0,
+        "route_description": "Unknown",
+        "pickup_done": false,
+        "delivery_done": false,
+        "termination_reason": "mission_completed"
+      },
+      {
+        "reward": 1.861596,
+        "length": 4,
+        "timestep": 209872,
+        "success": true,
+        "battery_used": 0,
+        "recharge_count": 0,
+        "route_description": "Unknown",
+        "pickup_done": false,
+        "delivery_done": false,
+        "termination_reason": "mission_completed"
+      }
+    ]
+  },
+  "failed_episodes": {
+    "count": 1,
+    "avg_reward": -1.0,
+    "avg_length": 2.0,
+    "failure_patterns": {
+      "termination_reasons": {
+        "invalid_action": 1
+      },
+      "patterns": {
+        "short_episodes": 1,
+        "high_battery_usage": 0,
+        "many_recharges": 0,
+        "no_pickup_achieved": 1,
+        "total_failures": 1
+      }
+    }
+  },
+  "training_metrics": {
+    "best_mean_reward": 1.821953434,
+    "current_mean_reward": 1.8103538950000002,
+    "training_stability": 0.28493672013561383
+  }
+}
