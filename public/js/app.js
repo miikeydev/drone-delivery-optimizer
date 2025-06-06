@@ -503,7 +503,7 @@ function runAlgorithm() {
   
   const runButton = document.getElementById('run-algo');
   runButton.disabled = true;
-  runButton.innerHTML = 'Loading...';
+  runButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" fill="currentColor"><animate attributeName="r" values="3;6;3" dur="1s" repeatCount="indefinite"/></circle></svg>';
   
   clearRouteVisualization();
   
@@ -584,7 +584,7 @@ function runAlgorithm() {
   })
   .finally(() => {
     runButton.disabled = false;
-    runButton.innerHTML = 'Run';
+    runButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><polygon points="8,5 19,12 8,19" fill="currentColor"/></svg>';
   });
 }
 
@@ -611,7 +611,7 @@ function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}) {
   // Couleurs selon succès/échec et algorithme
   const routeColor = extraInfo.failed 
     ? '#e74c3c'  // Rouge pour échec
-    : (extraInfo.algorithm === 'PPO' ? '#3742fa' : '#2ecc71');  // Bleu PPO, vert autres
+    : (extraInfo.algorithm === 'PPO' ? '#666' : '#2ecc71');  // Gris sobre pour PPO, vert pour autres
   
   const dashPattern = extraInfo.failed ? '10, 10' : (extraInfo.algorithm === 'PPO' ? '15, 5' : 'none');
   
@@ -894,9 +894,36 @@ let deliveryMarker = null;
 let pickupNodeId = null;
 let deliveryNodeId = null;
 
-// Récupérer les labels (plus de boutons)
-const pickupNodeLabel = document.getElementById('pickup-node-label');
-const deliveryNodeLabel = document.getElementById('delivery-node-label');
+// Récupérer les badges au lieu des labels - avec fallback
+const pickupBadge = document.querySelector('.point-badge.pickup .point-badge-text');
+const deliveryBadge = document.querySelector('.point-badge.delivery .point-badge-text');
+
+// Fallback si les badges n'existent pas encore
+const pickupLabel = document.getElementById('pickup-node-label');
+const deliveryLabel = document.getElementById('delivery-node-label');
+
+// Fonction helper pour mettre à jour le texte
+function updatePickupDisplay(text) {
+  if (pickupBadge) {
+    pickupBadge.textContent = text;
+  } else if (pickupLabel) {
+    pickupLabel.textContent = text;
+    pickupLabel.style.color = COLORS.pickup;
+  } else {
+    console.warn('No pickup display element found');
+  }
+}
+
+function updateDeliveryDisplay(text) {
+  if (deliveryBadge) {
+    deliveryBadge.textContent = text;
+  } else if (deliveryLabel) {
+    deliveryLabel.textContent = text;
+    deliveryLabel.style.color = COLORS.delivery;
+  } else {
+    console.warn('No delivery display element found');
+  }
+}
 
 // Fonction utilitaire pour trouver le nœud le plus proche d'une position
 function findClosestNode(latlng, nodes) {
@@ -914,10 +941,17 @@ function findClosestNode(latlng, nodes) {
 
 // Positionne les pins sur des points aléatoires après la génération du réseau
 function placeDefaultPins() {
+  console.log("[placeDefaultPins] Starting pin placement...");
+  console.log("[placeDefaultPins] Total nodes available:", allNodes.length);
+  
   // Pickup
   const pickupNodes = allNodes.filter(n => n.type === 'pickup');
+  console.log("[placeDefaultPins] Found pickup nodes:", pickupNodes.length);
+  
   if (pickupNodes.length > 0) {
     const randomPickup = pickupNodes[Math.floor(Math.random() * pickupNodes.length)];
+    console.log("[placeDefaultPins] Selected pickup:", randomPickup.id);
+    
     if (pickupMarker) map.removeLayer(pickupMarker);
     pickupMarker = L.marker([randomPickup.lat, randomPickup.lng], {
       draggable: true,
@@ -929,25 +963,30 @@ function placeDefaultPins() {
       })
     }).addTo(map);
     pickupNodeId = randomPickup.id;
-    pickupNodeLabel.textContent = pickupNodeId;
-    pickupNodeLabel.style.color = COLORS.pickup;
+    updatePickupDisplay(pickupNodeId);
+    
     pickupMarker.on('dragend', function(e) {
       const pos = e.target.getLatLng();
-      pickupNodeId = findClosestNode(pos, pickupNodes);
-      pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
-      pickupNodeLabel.style.color = COLORS.pickup;
+      const newPickupId = findClosestNode(pos, pickupNodes);
+      pickupNodeId = newPickupId;
+      updatePickupDisplay(pickupNodeId !== null ? pickupNodeId : '–');
       const node = pickupNodes.find(n => n.id === pickupNodeId);
       if (node) {
         pickupMarker.setLatLng([node.lat, node.lng]);
       }
     });
-    pickupMarker.fire('dragend');
+  } else {
+    console.warn("[placeDefaultPins] No pickup nodes found!");
   }
 
   // Delivery
   const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
+  console.log("[placeDefaultPins] Found delivery nodes:", deliveryNodes.length);
+  
   if (deliveryNodes.length > 0) {
     const randomDelivery = deliveryNodes[Math.floor(Math.random() * deliveryNodes.length)];
+    console.log("[placeDefaultPins] Selected delivery:", randomDelivery.id);
+    
     if (deliveryMarker) map.removeLayer(deliveryMarker);
     deliveryMarker = L.marker([randomDelivery.lat, randomDelivery.lng], {
       draggable: true,
@@ -959,20 +998,23 @@ function placeDefaultPins() {
       })
     }).addTo(map);
     deliveryNodeId = randomDelivery.id;
-    deliveryNodeLabel.textContent = deliveryNodeId;
-    deliveryNodeLabel.style.color = COLORS.delivery;
+    updateDeliveryDisplay(deliveryNodeId);
+    
     deliveryMarker.on('dragend', function(e) {
       const pos = e.target.getLatLng();
-      deliveryNodeId = findClosestNode(pos, deliveryNodes);
-      deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
-      deliveryNodeLabel.style.color = COLORS.delivery;
+      const newDeliveryId = findClosestNode(pos, deliveryNodes);
+      deliveryNodeId = newDeliveryId;
+      updateDeliveryDisplay(deliveryNodeId !== null ? deliveryNodeId : '–');
       const node = deliveryNodes.find(n => n.id === deliveryNodeId);
       if (node) {
         deliveryMarker.setLatLng([node.lat, node.lng]);
       }
     });
-    deliveryMarker.fire('dragend');
+  } else {
+    console.warn("[placeDefaultPins] No delivery nodes found!");
   }
+  
+  console.log("[placeDefaultPins] Final state - Pickup:", pickupNodeId, "Delivery:", deliveryNodeId);
 }
 
 // Remplacer l'écouteur sur pickupLayer et deliveryLayer par le comportement suivant :
@@ -990,13 +1032,12 @@ pickupLayer.on('click', (e) => {
     })
   }).addTo(map);
   pickupNodeId = findClosestNode(latlng, pickupNodes);
-  pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
-  pickupNodeLabel.style.color = COLORS.pickup;
+  updatePickupDisplay(pickupNodeId !== null ? pickupNodeId : '–');
+  
   pickupMarker.on('dragend', function(e) {
     const pos = e.target.getLatLng();
     pickupNodeId = findClosestNode(pos, pickupNodes);
-    pickupNodeLabel.textContent = pickupNodeId !== null ? pickupNodeId : '–';
-    pickupNodeLabel.style.color = COLORS.pickup;
+    updatePickupDisplay(pickupNodeId !== null ? pickupNodeId : '–');
     const node = pickupNodes.find(n => n.id === pickupNodeId);
     if (node) {
       pickupMarker.setLatLng([node.lat, node.lng]);
@@ -1019,13 +1060,12 @@ deliveryLayer.on('click', (e) => {
     })
   }).addTo(map);
   deliveryNodeId = findClosestNode(latlng, deliveryNodes);
-  deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
-  deliveryNodeLabel.style.color = COLORS.delivery;
+  updateDeliveryDisplay(deliveryNodeId !== null ? deliveryNodeId : '–');
+  
   deliveryMarker.on('dragend', function(e) {
     const pos = e.target.getLatLng();
     deliveryNodeId = findClosestNode(pos, deliveryNodes);
-    deliveryNodeLabel.textContent = deliveryNodeId !== null ? deliveryNodeId : '–';
-    deliveryNodeLabel.style.color = COLORS.delivery;
+    updateDeliveryDisplay(deliveryNodeId !== null ? deliveryNodeId : '–');
     const node = deliveryNodes.find(n => n.id === deliveryNodeId);
     if (node) {
       deliveryMarker.setLatLng([node.lat, node.lng]);

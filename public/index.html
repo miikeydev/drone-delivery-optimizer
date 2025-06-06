@@ -22,13 +22,15 @@
       <div class="sidebar-content">
         <!-- Départ & Arrivée section placée en haut -->
         <div class="control-section">
-          <h3>Pickup & Delivery</h3>
-          <div style="display:flex;gap:10px;align-items:center;">
-            <span id="pickup-node-label" style="font-size:13px;color:#f39c12;">–</span>
-            <span id="delivery-node-label" style="font-size:13px;color:#27ae60;">–</span>
-          </div>
-          <div style="font-size:11px;color:#666;margin-top:4px;">
-            Drag pins or click on pickup/delivery points to select
+          <div class="pickup-delivery-badges">
+            <div class="point-badge pickup">
+              <div class="point-badge-icon">P</div>
+              <div class="point-badge-text">Click pickup points</div>
+            </div>
+            <div class="point-badge delivery">
+              <div class="point-badge-icon">D</div>
+              <div class="point-badge-text">Click delivery points</div>
+            </div>
           </div>
         </div>
 
