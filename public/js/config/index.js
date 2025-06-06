@@ -18,10 +18,8 @@ const config = {
     data: path.join(__dirname, '..', '..', '..', 'data'),
     python: path.join(__dirname, '..', '..', '..', 'python'),
     models: [
-      path.join(__dirname, '..', '..', '..', 'python', 'models', 'drone_ppo_enhanced_final.zip'),
-      path.join(__dirname, '..', '..', '..', 'models', 'drone_ppo_enhanced_final.zip'),
-      path.join(__dirname, '..', '..', '..', 'python', 'models', 'best_model.zip'),
-      path.join(__dirname, '..', '..', '..', 'models', 'best_model.zip')
+      path.join(__dirname, '..', '..', '..', 'models', 'best_model.zip'),
+      path.join(__dirname, '..', '..', '..', 'python', 'models', 'best_model.zip')
     ]
   },
 

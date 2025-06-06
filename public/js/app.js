@@ -494,7 +494,6 @@ function runAlgorithm() {
   const batteryCapacity = window.batteryCapacity;
   const maxPayload = window.maxPayload;
   
-  // Get selected nodes (must be set)
   if (!pickupNodeId || !deliveryNodeId) {
     alert('Please select both pickup and delivery points first!');
     return;
@@ -502,15 +501,12 @@ function runAlgorithm() {
   
   console.log(`Running ${algorithm}: ${pickupNodeId} -> ${deliveryNodeId}`);
   
-  // Show loading
   const runButton = document.getElementById('run-algo');
   runButton.disabled = true;
   runButton.innerHTML = 'Loading...';
   
-  // Clear previous route
   clearRouteVisualization();
   
-  // Choose endpoint based on algorithm
   const endpoint = algorithm === 'ppo' ? '/api/run-ppo-inference' : '/api/run-algorithm';
   const requestBody = algorithm === 'ppo' ? {
     pickupNode: pickupNodeId,
@@ -525,7 +521,6 @@ function runAlgorithm() {
     endNode: deliveryNodeId
   };
   
-  // API call
   fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -533,45 +528,42 @@ function runAlgorithm() {
   })
   .then(response => response.json())
   .then(data => {
+    console.log('Algorithm response:', data);
+    
     if (data.status === 'success') {
-      // Handle different response formats
-      const stats = data.stats || data.result;
-      const routeIndices = data.route_indices || data.result?.route_indices;
-      const routeNames = data.route_names || data.result?.route_names;
-      const batteryHistory = data.battery_history || data.result?.battery_history;
+      const stats = data.stats || data.result || {};
+      const routeIndices = data.route_indices || data.result?.route_indices || [];
+      const routeNames = data.route_names || data.result?.route_names || [];
+      const batteryHistory = data.battery_history || data.result?.battery_history || [];
+      const actions = data.actions || data.result?.actions || [];
+      const actionTypes = data.action_types || data.result?.action_types || [];
       
-      if (stats?.success) {
-        // Success!
-        const successMsg = `Success!\nSteps: ${stats.steps}\nBattery used: ${stats.batteryUsed || stats.battery_used}%\nRoute: ${(routeNames || []).join(' → ')}`;
-        alert(successMsg);
+      // FIXED: Toujours afficher le chemin, succès ou échec
+      if (routeIndices.length > 0) {
+        const extraInfo = {
+          algorithm: algorithm.toUpperCase(),
+          failed: !stats.success,
+          actions: actions,
+          actionTypes: actionTypes,
+          modelType: data.result?.model_type || 'PPO'
+        };
         
-        // Visualize route with enhanced info for PPO
-        if (routeIndices && routeIndices.length > 0) {
-          if (algorithm === 'ppo' && data.actions) {
-            // Enhanced visualization for PPO with action info
-            visualizeRoute(routeIndices, batteryHistory, {
-              actions: data.actions,
-              actionTypes: data.action_types,
-              algorithm: 'PPO',
-              modelType: data.result?.model_type
-            });
-          } else {
-            // Standard visualization
-            visualizeRoute(routeIndices, batteryHistory);
-          }
+        // Visualiser la route
+        visualizeRoute(routeIndices, batteryHistory, extraInfo);
+        
+        // Message adapté selon le résultat
+        if (stats.success) {
+          const successMsg = `✅ Success!\nSteps: ${stats.steps || 'N/A'}\nBattery used: ${stats.batteryUsed || stats.battery_used || 'N/A'}%\nFinal battery: ${stats.battery_final || 'N/A'}%\nRoute: ${routeNames.join(' → ')}`;
+          alert(successMsg);
+        } else {
+          const failMsg = `❌ Mission failed!\nReason: ${stats.termination_reason || 'Unknown'}\nSteps taken: ${stats.steps || 0}\nPickup done: ${stats.pickup_done ? 'Yes' : 'No'}\nDelivery done: ${stats.delivery_done ? 'Yes' : 'No'}\nPartial route: ${routeNames.join(' → ')}`;
+          alert(failMsg);
         }
       } else {
-        // Failed
-        const failMsg = `Mission failed!\nReason: ${stats?.termination_reason || data.message}\nSteps: ${stats?.steps || 0}`;
-        alert(failMsg);
-        
-        // Still visualize partial route if available
-        if (routeIndices && routeIndices.length > 1) {
-          visualizeRoute(routeIndices, batteryHistory, { failed: true });
-        }
+        alert('No route data available to visualize');
       }
     } else {
-      // Error - Show helpful message for PPO
+      // Erreur - afficher message utile
       let errorMsg = `${algorithm.toUpperCase()} execution failed!\n${data.message || 'Unknown error'}`;
       
       if (algorithm === 'ppo' && data.help) {
@@ -591,7 +583,6 @@ function runAlgorithm() {
     alert(`Algorithm execution failed!\n${error.message}`);
   })
   .finally(() => {
-    // Restore button
     runButton.disabled = false;
     runButton.innerHTML = 'Run';
   });
@@ -608,130 +599,153 @@ function clearRouteVisualization() {
 }
 
 function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}) {
-  // Clear any existing route
   clearRouteVisualization();
   
-  if (!allNodes || routeIndices.length < 2) {
+  if (!allNodes || routeIndices.length < 1) {
     console.warn('Cannot visualize route: insufficient data');
     return;
   }
   
-  // Create new layer group for route
   routeLayer = L.layerGroup().addTo(map);
   
-  // Draw route path
-  const routeCoords = routeIndices.map(idx => {
-    if (idx < allNodes.length) {
-      return [allNodes[idx].lat, allNodes[idx].lng];
-    }
-    return null;
-  }).filter(coord => coord !== null);
+  // Couleurs selon succès/échec et algorithme
+  const routeColor = extraInfo.failed 
+    ? '#e74c3c'  // Rouge pour échec
+    : (extraInfo.algorithm === 'PPO' ? '#3742fa' : '#2ecc71');  // Bleu PPO, vert autres
   
-  if (routeCoords.length > 1) {
-    // Choose color based on success/failure
-    const routeColor = extraInfo.failed ? '#ff4757' : (extraInfo.algorithm === 'PPO' ? '#3742fa' : '#ff6b35');
-    const dashPattern = extraInfo.failed ? '5, 10' : (extraInfo.algorithm === 'PPO' ? '15, 5' : '10, 5');
+  const dashPattern = extraInfo.failed ? '10, 10' : (extraInfo.algorithm === 'PPO' ? '15, 5' : 'none');
+  
+  // Dessiner la route si plus d'un point
+  if (routeIndices.length > 1) {
+    const routeCoords = routeIndices.map(idx => {
+      if (idx < allNodes.length) {
+        return [allNodes[idx].lat, allNodes[idx].lng];
+      }
+      return null;
+    }).filter(coord => coord !== null);
     
-    // Draw the main route line
-    const routeLine = L.polyline(routeCoords, {
-      color: routeColor,
-      weight: extraInfo.algorithm === 'PPO' ? 8 : 6,
-      opacity: 0.8,
-      dashArray: dashPattern
-    }).addTo(routeLayer);
-    
-    // Add arrows to show direction
-    const decorator = L.polylineDecorator(routeLine, {
-      patterns: [
-        {
+    if (routeCoords.length > 1) {
+      const routeLine = L.polyline(routeCoords, {
+        color: routeColor,
+        weight: extraInfo.algorithm === 'PPO' ? 6 : 4,
+        opacity: 0.8,
+        dashArray: dashPattern
+      }).addTo(routeLayer);
+      
+      // Flèches directionnelles
+      const decorator = L.polylineDecorator(routeLine, {
+        patterns: [{
           offset: 25,
           repeat: 50,
           symbol: L.Symbol.arrowHead({
-            pixelSize: extraInfo.algorithm === 'PPO' ? 14 : 12,
+            pixelSize: 12,
             polygon: true,
             pathOptions: { color: routeColor, fillOpacity: 0.8 }
           })
-        }
-      ]
-    }).addTo(routeLayer);
-    
-    // Add numbered markers for each step
-    routeIndices.forEach((nodeIdx, stepIdx) => {
-      if (nodeIdx < allNodes.length) {
-        const node = allNodes[nodeIdx];
-        const battery = batteryHistory[stepIdx] || 100;
-        
-        // Color based on battery level
-        let markerColor = '#4CAF50'; // Green
-        if (battery < 30) markerColor = '#F44336'; // Red
-        else if (battery < 60) markerColor = '#FF9800'; // Orange
-        
-        const stepMarker = L.circleMarker([node.lat, node.lng], {
-          radius: extraInfo.algorithm === 'PPO' ? 10 : 8,
-          fillColor: markerColor,
-          color: '#fff',
-          weight: 2,
-          fillOpacity: 0.9
-        }).addTo(routeLayer);
-        
-        // Enhanced popup with PPO-specific info
-        let popupContent = `
-          <b>Step ${stepIdx + 1}</b><br>
-          Node: ${node.id}<br>
-          Type: ${node.type}<br>
-          Battery: ${battery.toFixed(1)}%
-        `;
-        
-        if (extraInfo.actions && extraInfo.actionTypes) {
-          const action = extraInfo.actions[stepIdx];
-          const actionType = extraInfo.actionTypes[stepIdx];
-          popupContent += `<br>Action: ${action} (${actionType})`;
-        }
-        
-        if (extraInfo.algorithm === 'PPO') {
-          popupContent += `<br><small>Model: ${extraInfo.modelType || 'PPO'}</small>`;
-        }
-        
-        stepMarker.bindPopup(popupContent);
-        
-        // Add step number label
+        }]
+      }).addTo(routeLayer);
+    }
+  }
+  
+  // Marqueurs pour chaque étape
+  routeIndices.forEach((nodeIdx, stepIdx) => {
+    if (nodeIdx < allNodes.length) {
+      const node = allNodes[nodeIdx];
+      const battery = batteryHistory[stepIdx] || 100;
+      
+      // Couleur selon niveau de batterie
+      let markerColor = '#27ae60'; // Vert
+      if (battery < 20) markerColor = '#e74c3c'; // Rouge
+      else if (battery < 50) markerColor = '#f39c12'; // Orange
+      else if (battery < 80) markerColor = '#f1c40f'; // Jaune
+      
+      const stepMarker = L.circleMarker([node.lat, node.lng], {
+        radius: stepIdx === 0 ? 12 : (stepIdx === routeIndices.length - 1 ? 10 : 8),
+        fillColor: markerColor,
+        color: stepIdx === 0 ? '#2c3e50' : '#fff',
+        weight: stepIdx === 0 ? 3 : 2,
+        fillOpacity: 0.9
+      }).addTo(routeLayer);
+      
+      // Popup avec informations détaillées
+      let popupContent = `
+        <div style="min-width: 200px;">
+          <h4 style="margin: 0 0 8px 0; color: ${routeColor};">
+            ${stepIdx === 0 ? '🚁 START' : (stepIdx === routeIndices.length - 1 ? '🏁 END' : `Step ${stepIdx + 1}`)}
+          </h4>
+          <b>Node:</b> ${node.id}<br>
+          <b>Type:</b> ${node.type}<br>
+          <b>Battery:</b> ${battery.toFixed(1)}%<br>
+      `;
+      
+      if (extraInfo.actions && extraInfo.actionTypes && stepIdx < extraInfo.actions.length) {
+        const action = extraInfo.actions[stepIdx];
+        const actionType = extraInfo.actionTypes[stepIdx];
+        popupContent += `<b>Action:</b> ${action} (${actionType})<br>`;
+      }
+      
+      if (extraInfo.algorithm) {
+        popupContent += `<b>Algorithm:</b> ${extraInfo.algorithm}<br>`;
+      }
+      
+      // Indicateurs spéciaux pour pickup/delivery
+      if (node.type === 'pickup') {
+        popupContent += `<span style="color: ${COLORS.pickup};">📦 Pickup Point</span><br>`;
+      } else if (node.type === 'delivery') {
+        popupContent += `<span style="color: ${COLORS.delivery};">🎯 Delivery Point</span><br>`;
+      } else if (node.type === 'charging') {
+        popupContent += `<span style="color: ${COLORS.charging};">⚡ Charging Station</span><br>`;
+      } else if (node.type === 'hubs') {
+        popupContent += `<span style="color: ${COLORS.hubs};">🏢 Hub</span><br>`;
+      }
+      
+      popupContent += '</div>';
+      stepMarker.bindPopup(popupContent);
+      
+      // Numéro d'étape sur le marqueur
+      if (stepIdx > 0) {  // Pas de numéro sur le point de départ
         const stepLabel = L.divIcon({
-          html: `<div style="color: white; font-weight: bold; font-size: ${extraInfo.algorithm === 'PPO' ? '12px' : '10px'}; text-align: center; line-height: ${extraInfo.algorithm === 'PPO' ? '20px' : '16px'};">${stepIdx + 1}</div>`,
+          html: `<div style="color: white; font-weight: bold; font-size: 10px; text-align: center; line-height: 16px;">${stepIdx}</div>`,
           className: 'step-number-label',
-          iconSize: extraInfo.algorithm === 'PPO' ? [20, 20] : [16, 16]
+          iconSize: [16, 16]
         });
-        
         L.marker([node.lat, node.lng], { icon: stepLabel }).addTo(routeLayer);
       }
-    });
-    
-    // Add algorithm badge
-    if (extraInfo.algorithm) {
-      const algorithmBadge = L.control({ position: 'topright' });
-      algorithmBadge.onAdd = function() {
-        const div = L.DomUtil.create('div', 'algorithm-badge');
-        div.innerHTML = `
-          <div style="background: ${routeColor}; color: white; padding: 8px 12px; border-radius: 20px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
-            ${extraInfo.algorithm} Route
-            ${extraInfo.failed ? ' (Failed)' : ' (Success)'}
-          </div>
-        `;
-        return div;
-      };
-      algorithmBadge.addTo(map);
-      
-      // Remove badge after 5 seconds
-      setTimeout(() => {
-        map.removeControl(algorithmBadge);
-      }, 5000);
     }
-    
-    // Zoom to route bounds
+  });
+  
+  // Badge informatif
+  const badgeColor = extraInfo.failed ? '#e74c3c' : routeColor;
+  const status = extraInfo.failed ? 'FAILED' : 'SUCCESS';
+  
+  const infoBadge = L.control({ position: 'topright' });
+  infoBadge.onAdd = function() {
+    const div = L.DomUtil.create('div', 'route-info-badge');
+    div.innerHTML = `
+      <div style="background: ${badgeColor}; color: white; padding: 8px 12px; border-radius: 20px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3); margin-bottom: 5px;">
+        ${extraInfo.algorithm || 'Route'} - ${status}
+      </div>
+    `;
+    return div;
+  };
+  infoBadge.addTo(map);
+  
+  // Supprimer le badge après 8 secondes
+  setTimeout(() => {
+    try {
+      map.removeControl(infoBadge);
+    } catch (e) {
+      // Badge déjà supprimé
+    }
+  }, 8000);
+  
+  // Zoomer sur la route
+  if (routeLayer.getLayers().length > 0) {
     const group = new L.featureGroup(routeLayer.getLayers());
-    map.fitBounds(group.getBounds().pad(0.1));
-    
-    console.log(`${extraInfo.algorithm || 'Route'} visualized: ${routeIndices.length} steps`);
+    map.fitBounds(group.getBounds().pad(0.15));
   }
+  
+  console.log(`Route visualized: ${routeIndices.length} steps, ${extraInfo.algorithm || 'Algorithm'} ${status}`);
 }
 
 // Add CSS for route visualization

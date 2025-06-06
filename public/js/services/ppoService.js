@@ -69,7 +69,8 @@ class PPOService {
       ];
 
       const inferenceProcess = spawn('python', args, {
-        cwd: this.config.paths.python
+        cwd: this.config.paths.python,
+        stdio: ['pipe', 'pipe', 'pipe']
       });
 
       let output = '';
@@ -79,7 +80,7 @@ class PPOService {
       const timeout = setTimeout(() => {
         if (!responseSent) {
           responseSent = true;
-          inferenceProcess.kill();
+          inferenceProcess.kill('SIGTERM');
           resolve({
             status: 'error',
             message: `PPO inference timeout (${this.config.ppo.timeout / 1000}s)`
@@ -105,7 +106,7 @@ class PPOService {
         } else {
           resolve({
             status: 'error',
-            message: 'PPO inference failed',
+            message: `PPO inference failed (exit code ${code})`,
             exit_code: code,
             stdout: output,
             stderr: errorOutput
@@ -133,23 +134,38 @@ class PPOService {
     if (fs.existsSync(resultPath)) {
       try {
         const resultData = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+        
+        const routeIndices = resultData.route_indices || [];
+        const routeNames = resultData.route_names || [];
+        const batteryHistory = resultData.battery_history || [];
+        const actions = resultData.actions || [];
+        
         resolve({
           status: 'success',
           message: 'PPO inference completed',
           result: resultData,
           stats: {
-            success: resultData.success,
-            steps: resultData.steps,
-            batteryUsed: resultData.battery_used,
-            termination_reason: resultData.termination_reason
+            success: resultData.success || false,
+            steps: resultData.steps || 0,
+            batteryUsed: resultData.battery_used || 0,
+            battery_final: resultData.battery_final || 0,
+            termination_reason: resultData.termination_reason || 'unknown',
+            pickup_done: resultData.pickup_done || false,
+            delivery_done: resultData.delivery_done || false
           },
-          route_indices: resultData.route_indices,
-          route_names: resultData.route_names,
-          battery_history: resultData.battery_history,
-          actions: resultData.actions,
-          action_types: resultData.action_types
+          route_indices: routeIndices,
+          route_names: routeNames,
+          battery_history: batteryHistory,
+          actions: actions,
+          model_type: resultData.model_type || 'PPO',
+          total_reward: resultData.total_reward || 0
         });
-        fs.unlinkSync(resultPath);
+        
+        try {
+          fs.unlinkSync(resultPath);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
       } catch (parseError) {
         resolve({
           status: 'error',
