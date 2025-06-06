@@ -127,13 +127,13 @@ class DroneDeliveryFullEnv(gym.Env):
         self.episode_rewards = []
         self.total_reward = 0
         
-        # Curriculum learning parameters
+        # Curriculum learning parameters - LOCKED for stability
         self.use_curriculum = use_curriculum
-        self.curriculum_threshold = curriculum_threshold  # Now uses 0.25 threshold
+        self.curriculum_threshold = 0.15  # CHANGED: 0.25 → 0.15 (easier to advance)
         self.curriculum_level = 0
         self.max_curriculum_level = 4
         self.episode_successes = []
-        self.curriculum_window = 30
+        self.curriculum_window = 50        # CHANGED: 30 → 50 (more stable)
         
         # NEW: Curriculum parameters for battery and payload
         self.curriculum_battery_levels = [
@@ -560,7 +560,7 @@ class DroneDeliveryFullEnv(gym.Env):
             return self.payload_range
     
     def _update_curriculum(self, success: bool):
-        """Update curriculum level based on recent performance."""
+        """Update curriculum level based on recent performance - LOCKED against downgrade."""
         if not self.use_curriculum:
             return
         
@@ -575,9 +575,7 @@ class DroneDeliveryFullEnv(gym.Env):
         # Calculate recent success rate
         recent_success_rate = sum(self.episode_successes) / len(self.episode_successes)
         
-        # REMOVED: Debug prints - only log curriculum changes, not every check
-        
-        # Increase difficulty if doing well
+        # ONLY INCREASE difficulty if doing well - NO DOWNGRADE
         if (recent_success_rate >= self.curriculum_threshold and 
             self.curriculum_level < self.max_curriculum_level):
             old_level = self.curriculum_level
@@ -586,29 +584,13 @@ class DroneDeliveryFullEnv(gym.Env):
             new_battery_range = self.curriculum_battery_levels[self.curriculum_level]
             new_payload_range = self.curriculum_payload_levels[self.curriculum_level]
             
-            print(f"Curriculum Level UP! {old_level} → {self.curriculum_level}")
-            print(f"   Success rate: {recent_success_rate:.1%}")
+            print(f"🎯 Curriculum Level UP! {old_level} → {self.curriculum_level}")
+            print(f"   Success rate: {recent_success_rate:.1%} >= {self.curriculum_threshold:.1%}")
             print(f"   New battery range: {new_battery_range}")
             print(f"   New payload range: {new_payload_range}")
             
             self.episode_successes = []
             
-        # Decrease difficulty if struggling too much
-        elif (recent_success_rate < 0.2 and self.curriculum_level > 0 and
-              len(self.episode_successes) >= self.curriculum_window):
-            old_level = self.curriculum_level
-            self.curriculum_level -= 1
-            
-            new_battery_range = self.curriculum_battery_levels[self.curriculum_level]
-            new_payload_range = self.curriculum_payload_levels[self.curriculum_level]
-            
-            print(f"Curriculum Level DOWN! {old_level} → {self.curriculum_level}")
-            print(f"   Success rate: {recent_success_rate:.1%}")
-            print(f"   New battery range: {new_battery_range}")
-            print(f"   New payload range: {new_payload_range}")
-            
-            self.episode_successes = []
-
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
         """Reset the environment to initial state."""
         super().reset(seed=seed)
@@ -748,16 +730,15 @@ class DroneDeliveryFullEnv(gym.Env):
                     new_dist = self.dist_to_pickup.get(self.current_node, float('inf'))
                     if old_dist != float('inf') and new_dist != float('inf'):
                         progress = old_dist - new_dist
-                        progress_reward = 0.02 * progress
+                        # CHANGED: Scale by pair distance for proportional shaping
+                        pair_distance = getattr(self, 'current_pair_distance', 100)
+                        progress_reward = 0.2 * (progress / max(pair_distance, 1))
                         if progress < 0:
-                            progress_reward *= 1.5
+                            progress_reward *= 1.5  # Penalize backtracking more
                         reward += progress_reward
                         info['progress_to_pickup'] = progress
                         info['progress_reward'] = progress_reward
-                        
-                        # REMOVED: Debug prints for progress - too spammy
-                        # if 'progress_reward' in info:
-                        #     print(f"[DBG] progress {info['progress_reward']:.3f}")
+                        info['pair_distance_scaled'] = pair_distance
                     self.last_dist_to_pickup = new_dist
                     
                 elif self.pickup_done and not self.delivery_done and self.dist_to_delivery:
@@ -765,16 +746,15 @@ class DroneDeliveryFullEnv(gym.Env):
                     new_dist = self.dist_to_delivery.get(self.current_node, float('inf'))
                     if old_dist != float('inf') and new_dist != float('inf'):
                         progress = old_dist - new_dist
-                        progress_reward = 0.02 * progress
+                        # CHANGED: Scale by pair distance for proportional shaping
+                        pair_distance = getattr(self, 'current_pair_distance', 100)
+                        progress_reward = 0.2 * (progress / max(pair_distance, 1))
                         if progress < 0:
-                            progress_reward *= 1.5
+                            progress_reward *= 1.5  # Penalize backtracking more
                         reward += progress_reward
                         info['progress_to_delivery'] = progress
                         info['progress_reward'] = progress_reward
-                        
-                        # REMOVED: Debug prints for progress - too spammy
-                        # if 'progress_reward' in info:
-                        #     print(f"[DBG] progress {info['progress_reward']:.3f}")
+                        info['pair_distance_scaled'] = pair_distance
                     self.last_dist_to_delivery = new_dist
                 
                 # CHANGED: Use rebalanced rewards

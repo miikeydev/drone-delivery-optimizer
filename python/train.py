@@ -334,24 +334,43 @@ class NewBestCallback(BaseCallback):
         return True
 
 
+# Add GNN imports after existing imports
+try:
+    from gnn_policies import GNNPolicy, MaskableGNNPolicy, SimpleGNNPolicy, MaskableSimpleGNNPolicy
+    GNN_AVAILABLE = True
+    print("✅ GNN policies available - can use Graph Neural Networks")
+except ImportError as e:
+    GNN_AVAILABLE = False
+    print(f"⚠️ GNN policies not available: {e}")
+    print("   Install torch_geometric: pip install torch_geometric")
+
+
 def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init: int = 1,
                         total_timesteps: int = 1000000, n_envs: int = 8,
                         save_path: str = "models/drone_ppo_masked",
                         randomize_battery: bool = False, battery_range: tuple = (60, 100),
                         randomize_payload: bool = False, payload_range: tuple = (1, 5),
                         use_masking: bool = True, use_curriculum: bool = True,
-                        use_node_embedding: bool = True, embedding_dim: int = 32):
-    """Train PPO/MaskablePPO agent with rebalanced parameters - FIXED BrokenPipe issues"""
+                        use_node_embedding: bool = True, embedding_dim: int = 32,
+                        use_gnn: bool = False, gnn_simple: bool = False):  # NEW GNN params
+    """Train PPO/MaskablePPO agent with optional GNN backbone"""
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"{save_path}_{timestamp}"
     
-    print("Drone Delivery Training - Rebalanced Rewards System")
+    print("Drone Delivery Training - Enhanced with GNN Option")
     print("=" * 60)
-    print(f"Algorithm: {'MaskablePPO' if use_masking and MASKABLE_PPO_AVAILABLE else 'PPO'}")
+    algorithm_name = ""
+    if use_gnn and GNN_AVAILABLE:
+        algorithm_name = f"{'MaskablePPO' if use_masking else 'PPO'} + {'Simple' if gnn_simple else 'Full'}GNN"
+    else:
+        algorithm_name = f"{'MaskablePPO' if use_masking and MASKABLE_PPO_AVAILABLE else 'PPO'}"
+    
+    print(f"Algorithm: {algorithm_name}")
     print(f"Graph: {graph_path}")
     print(f"Battery: {battery_init}, Payload: {payload_init}")
-    print(f"Curriculum: {'Enabled' if use_curriculum else 'Disabled'} (threshold=0.25)")
+    print(f"Curriculum: {'Enabled' if use_curriculum else 'Disabled'} (threshold=0.15)")
+    print(f"GNN: {'Enabled (' + ('Simple' if gnn_simple else 'Full') + ')' if use_gnn else 'Disabled'}")
     print(f"Timesteps: {total_timesteps:,}, Envs: {n_envs}")
     print(f"Run: {run_name}")
     print("=" * 60)
@@ -393,56 +412,137 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
     )
     eval_env = Monitor(eval_env)
     
-    # REBALANCED HYPERPARAMETERS
-    if use_masking and MASKABLE_PPO_AVAILABLE:
-        net_arch = [512, 256, 128]
+    # ENHANCED MODEL CREATION with GNN support
+    if use_gnn and GNN_AVAILABLE:
+        # GNN-based training with adjusted hyperparameters
+        if use_masking and MASKABLE_PPO_AVAILABLE:
+            if gnn_simple:
+                policy_class = MaskableSimpleGNNPolicy
+                print("🧠 Using MaskablePPO + Simple GNN")
+            else:
+                policy_class = MaskableGNNPolicy
+                print("🧠 Using MaskablePPO + Full GNN")
+            
+            model = MaskablePPO(
+                policy_class,
+                env,
+                learning_rate=1e-4,        # LOWERED for GNN stability
+                n_steps=n_envs * 2048,     # INCREASED batch diversity
+                batch_size=1024,           # INCREASED for GNN variance reduction
+                n_epochs=5,                # REDUCED to prevent overfitting
+                gamma=0.99,                # STANDARD discount
+                gae_lambda=0.95,
+                clip_range=0.2,
+                ent_coef=0.01,            # BALANCED exploration
+                vf_coef=0.5,              # INCREASED value function weight
+                max_grad_norm=0.5,
+                target_kl=0.02,           # TIGHTER KL constraint
+                verbose=0,
+                tensorboard_log=f"./logs/{run_name}/",
+                policy_kwargs=dict(
+                    gnn_hidden_dim=64 if not gnn_simple else 32,
+                    gnn_heads=4 if not gnn_simple else 2,
+                    gnn_layers=2 if not gnn_simple else 1,
+                    gnn_aggregation="mean",
+                    gnn_features_dim=128,
+                    net_arch=[256, 128],      # SMALLER traditional network
+                    activation_fn=torch.nn.ReLU,
+                    ortho_init=False
+                )
+            )
+        else:
+            if gnn_simple:
+                policy_class = SimpleGNNPolicy
+                print("🧠 Using PPO + Simple GNN")
+            else:
+                policy_class = GNNPolicy
+                print("🧠 Using PPO + Full GNN")
+            
+            model = PPO(
+                policy_class,
+                env,
+                learning_rate=1e-4,
+                n_steps=n_envs * 2048,
+                batch_size=1024,
+                n_epochs=5,
+                gamma=0.99,
+                gae_lambda=0.95,
+                clip_range=0.2,
+                ent_coef=0.01,
+                vf_coef=0.5,
+                max_grad_norm=0.5,
+                target_kl=0.02,
+                verbose=0,
+                tensorboard_log=f"./logs/{run_name}/",
+                policy_kwargs=dict(
+                    gnn_hidden_dim=64 if not gnn_simple else 32,
+                    gnn_heads=4 if not gnn_simple else 2,
+                    gnn_layers=2 if not gnn_simple else 1,
+                    gnn_aggregation="mean",
+                    gnn_features_dim=128,
+                    net_arch=[256, 128],
+                    activation_fn=torch.nn.ReLU,
+                    ortho_init=False
+                )
+            )
         
-        model = MaskablePPO(
-            "MlpPolicy",
-            env,
-            learning_rate=2e-4,
-            n_steps=4096,
-            batch_size=256,
-            n_epochs=10,
-            gamma=0.995,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.005,
-            vf_coef=0.4,
-            max_grad_norm=0.5,
-            verbose=0,
-            tensorboard_log=f"./logs/{run_name}/",
-            policy_kwargs=dict(
-                net_arch=net_arch,
-                activation_fn=torch.nn.ReLU,
-                ortho_init=False
-            )
-        )
-        print(f"🧠 Rebalanced architecture: {net_arch} + embedding={use_node_embedding}")
-        print(f"🎯 Hyperparams: lr=2e-4, gamma=0.995, ent_coef=0.005, n_steps=4096")
+        print(f"🧠 GNN HYPERPARAMS: lr=1e-4, batch=1024, ent_coef=0.01")
+        print(f"🎯 GNN CONFIG: hidden={64 if not gnn_simple else 32}, heads={4 if not gnn_simple else 2}")
+        
     else:
-        model = PPO(
-            "MlpPolicy",
-            env,
-            learning_rate=2e-4,
-            n_steps=4096,
-            batch_size=256,
-            n_epochs=10,
-            gamma=0.995,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.005,
-            vf_coef=0.4,
-            max_grad_norm=0.5,
-            verbose=0,
-            tensorboard_log=f"./logs/{run_name}/",
-            policy_kwargs=dict(
-                net_arch=[512, 256, 128],
-                activation_fn=torch.nn.ReLU,
-                ortho_init=False
+        # REBALANCED HYPERPARAMETERS for standard training
+        if use_masking and MASKABLE_PPO_AVAILABLE:
+            net_arch = [512, 256, 128]
+            
+            # EXPLORATION BOOST - Higher entropy for better action space exploration
+            model = MaskablePPO(
+                "MlpPolicy",
+                env,
+                learning_rate=2e-4,
+                n_steps=4096,
+                batch_size=256,
+                n_epochs=10,
+                gamma=0.995,
+                gae_lambda=0.95,
+                clip_range=0.2,
+                ent_coef=0.02,        # CHANGED: 0.005 → 0.02 (4x more exploration)
+                vf_coef=0.4,
+                max_grad_norm=0.5,
+                target_kl=0.03,       # NEW: Early stopping for stable exploration
+                verbose=0,
+                tensorboard_log=f"./logs/{run_name}/",
+                policy_kwargs=dict(
+                    net_arch=net_arch,
+                    activation_fn=torch.nn.ReLU,
+                    ortho_init=False
+                )
             )
-        )
-        print(f"🧠 Rebalanced Architecture: [512, 256, 128] + rebalanced hyperparams")
+            print(f"🧠 EXPLORATION BOOSTED: ent_coef=0.02, target_kl=0.03")
+            print(f"🎯 Hyperparams: lr=2e-4, gamma=0.995, HIGH ENTROPY for K=10 exploration")
+        else:
+            model = PPO(
+                "MlpPolicy",
+                env,
+                learning_rate=2e-4,
+                n_steps=4096,
+                batch_size=256,
+                n_epochs=10,
+                gamma=0.995,
+                gae_lambda=0.95,
+                clip_range=0.2,
+                ent_coef=0.02,        # CHANGED: 0.005 → 0.02 (4x more exploration)
+                vf_coef=0.4,
+                max_grad_norm=0.5,
+                target_kl=0.03,       # NEW: Early stopping for stable exploration
+                verbose=0,
+                tensorboard_log=f"./logs/{run_name}/",
+                policy_kwargs=dict(
+                    net_arch=[512, 256, 128],
+                    activation_fn=torch.nn.ReLU,
+                    ortho_init=False
+                )
+            )
+            print(f"🧠 EXPLORATION BOOSTED: ent_coef=0.02, target_kl=0.03")
     
     # Set up callbacks
     metrics_callback = TrainingMetricsCallback(
@@ -559,7 +659,7 @@ def train_drone_delivery(graph_path: str, battery_init: int = 100, payload_init:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train PPO/MaskablePPO with anti-aliasing node embedding")
+    parser = argparse.ArgumentParser(description="Train PPO/MaskablePPO with optional GNN backbone")
     parser.add_argument("--graph", type=str, required=True, help="Path to graph JSON file")
     parser.add_argument("--battery", type=int, default=100, help="Initial battery level")
     parser.add_argument("--payload", type=int, default=1, help="Initial payload")
@@ -579,6 +679,12 @@ def main():
     parser.add_argument("--no-embedding", action="store_true", help="Disable node embedding (may cause aliasing)")
     parser.add_argument("--embedding-dim", type=int, default=32, help="Node embedding dimension")
     parser.add_argument("--save", type=str, help="Alternative save path (shorter alias)")
+    
+    # NEW GNN arguments
+    parser.add_argument("--use-gnn", action="store_true", help="Use Graph Neural Network backbone")
+    parser.add_argument("--gnn-simple", action="store_true", help="Use simplified GNN (faster training)")
+    parser.add_argument("--gnn-test", action="store_true", help="Quick GNN smoke test (500k steps)")
+    parser.add_argument("--gnn-default", action="store_true", help="Use GNN by default (recommended)")
     
     args = parser.parse_args()
     
@@ -608,7 +714,23 @@ def main():
     # Convert to absolute paths
     graph_path = os.path.abspath(args.graph)
     
-    # Train model with anti-aliasing embedding
+    # FORCE GNN usage by default if available and not explicitly disabled
+    if not args.use_gnn and not args.gnn_test and GNN_AVAILABLE:
+        if args.gnn_default:
+            args.use_gnn = True
+            args.gnn_simple = True  # Use simple GNN for faster training
+            print("🧠 AUTO-ENABLED: Simple GNN (faster training, better performance)")
+    
+    # Adjust parameters for GNN test
+    if args.gnn_test:
+        args.use_gnn = True
+        args.gnn_simple = True
+        args.timesteps = 500000
+        args.no_curriculum = True
+        args.embedding_dim = 0  # Don't use tabulaire embedding with GNN
+        print("🧪 GNN Smoke Test Mode: 500k steps, simple GNN, no curriculum")
+    
+    # Train model with optional GNN
     model, run_name = train_drone_delivery(
         graph_path=graph_path,
         battery_init=args.battery,
@@ -623,7 +745,9 @@ def main():
         use_masking=not args.no_masking,
         use_curriculum=not args.no_curriculum,
         use_node_embedding=not args.no_embedding,
-        embedding_dim=args.embedding_dim
+        embedding_dim=args.embedding_dim,
+        use_gnn=args.use_gnn,              # NEW
+        gnn_simple=args.gnn_simple         # NEW
     )
     
     print(f"\n🎉 Training session '{run_name}' completed!")
