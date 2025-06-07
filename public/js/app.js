@@ -2,6 +2,7 @@
 // Importing CONFIG for potential future use and to document dependency
 import { pickCityPoints, CONFIG } from '/js/city-picker.js';
 import { haversineDistance, gaussianRandom, rgbToHex, RNG, insideFrance, setFrancePolygon } from './utils.js';
+import { GeneticAlgorithm } from './GA.js';
 
 // Map initialization code - only once
 const map = L.map('map').setView([46.6, 2.3], 6);
@@ -507,6 +508,73 @@ function runAlgorithm() {
   
   clearRouteVisualization();
   
+  // Handle GA algorithm locally
+  if (algorithm === 'ga') {
+    try {
+      console.log('[GA] Starting local genetic algorithm...');
+      console.log(`[GA] Pickup: ${pickupNodeId}, Delivery: ${deliveryNodeId}`);
+      console.log(`[GA] Battery: ${batteryCapacity}%, Max Payload: ${maxPayload}kg`);
+      
+      const ga = new GeneticAlgorithm(
+        allNodes, 
+        allEdges, 
+        pickupNodeId, 
+        deliveryNodeId, 
+        batteryCapacity, 
+        maxPayload
+      );
+      
+      const result = ga.run();
+      
+      console.log('[GA] Algorithm completed:', result);
+      
+      if (result.success && result.route_indices.length > 0) {
+        const extraInfo = {
+          algorithm: 'GA',
+          failed: !result.success,
+          actions: result.route_names,
+          actionTypes: result.route_names.map(() => 'move'),
+          modelType: 'Genetic Algorithm'
+        };
+        
+        visualizeRoute(result.route_indices, result.battery_history, extraInfo);
+        
+        const successMsg = `✅ GA Success!\nFitness: ${result.fitness.toFixed(2)}\nSteps: ${result.stats.steps}\nBattery used: ${result.stats.battery_used.toFixed(1)}%\nFinal battery: ${result.stats.battery_final.toFixed(1)}%\nRoute: ${result.route_names.join(' → ')}`;
+        alert(successMsg);
+      } else {
+        console.log(`[GA] 🔍 DEBUGGING FAILED ROUTE:`);
+        console.log(`[GA] Selected pickup: ${pickupNodeId}`);
+        console.log(`[GA] Selected delivery: ${deliveryNodeId}`);
+        console.log(`[GA] All pickup nodes: ${allNodes.filter(n => n.type === 'pickup').map(n => n.id).join(', ')}`);
+        console.log(`[GA] All delivery nodes: ${allNodes.filter(n => n.type === 'delivery').map(n => n.id).join(', ')}`);
+        console.log(`[GA] Best route found: ${result.route_names.join(' → ')}`);
+        
+        const failMsg = `❌ GA Failed!\nNo valid route found\nBest fitness: ${result.fitness.toFixed(2)}\nTry adjusting parameters or selecting different points.\n\nCheck browser console for detailed logs.`;
+        alert(failMsg);
+        
+        // Still visualize the best attempt
+        if (result.route_indices.length > 0) {
+          const extraInfo = {
+            algorithm: 'GA',
+            failed: true,
+            actions: result.route_names,
+            actionTypes: result.route_names.map(() => 'move'),
+            modelType: 'Genetic Algorithm'
+          };
+          visualizeRoute(result.route_indices, result.battery_history, extraInfo);
+        }
+      }
+    } catch (error) {
+      console.error('[GA] Error:', error);
+      alert(`GA execution failed!\n${error.message}\n\nCheck browser console for details.`);
+    }
+    
+    runButton.disabled = false;
+    runButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><polygon points="8,5 19,12 8,19" fill="currentColor"/></svg>';
+    return;
+  }
+  
+  // Handle PPO and other algorithms via server
   const endpoint = algorithm === 'ppo' ? '/api/run-ppo-inference' : '/api/run-algorithm';
   const requestBody = algorithm === 'ppo' ? {
     pickupNode: pickupNodeId,
