@@ -1,5 +1,8 @@
 # Drone Delivery Optimizer
 
+https://github.com/user-attachments/assets/82c6bbbe-922b-4526-accd-04f93a6b3ee6
+
+
 This project is an interactive web application to simulate and optimize parcel delivery by drone across a map of France. The user can configure various parameters and visualize the optimal path for a drone between a hub, a pickup point, a delivery point, and optionally a return to the hub.
 
 ## Main Features
