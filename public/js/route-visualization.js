@@ -84,15 +84,39 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
         fillOpacity: 0.9
       }).addTo(routeLayer);
       
+      // Calculate additional step information
+      let distanceFromPrevious = 0;
+      let energyUsed = 0;
+      let timeElapsed = 0;
+      
+      if (stepIdx > 0 && routeIndices[stepIdx - 1] < allNodes.length) {
+        const prevNode = allNodes[routeIndices[stepIdx - 1]];
+        distanceFromPrevious = Math.sqrt(
+          Math.pow((node.lat - prevNode.lat) * 111, 2) + 
+          Math.pow((node.lng - prevNode.lng) * 111 * Math.cos(node.lat * Math.PI / 180), 2)
+        );
+        energyUsed = distanceFromPrevious * 0.8; // Simplified energy calculation
+        timeElapsed = distanceFromPrevious / 60; // Assuming 60 km/h average speed
+      }
+      
       let popupContent = `
-        <div style="min-width: 200px;">
+        <div style="min-width: 250px;">
           <h4 style="margin: 0 0 8px 0; color: ${routeColor};">
             ${isStart ? 'START' : (isEnd ? 'END' : `Step ${stepIdx + 1}`)}
           </h4>
           <b>Node:</b> ${node.id}<br>
           <b>Type:</b> ${node.type}<br>
+          <b>Position:</b> ${node.lat.toFixed(4)}, ${node.lng.toFixed(4)}<br>
           <b>Battery:</b> ${battery.toFixed(1)}%<br>
       `;
+      
+      if (stepIdx > 0) {
+        const prevBattery = batteryHistory[stepIdx - 1] || 100;
+        const batteryDrop = prevBattery - battery;
+        popupContent += `<b>Distance from previous:</b> ${distanceFromPrevious.toFixed(2)} km<br>`;
+        popupContent += `<b>Energy consumed:</b> ${batteryDrop.toFixed(1)}%<br>`;
+        popupContent += `<b>Flight time:</b> ${timeElapsed.toFixed(1)} min<br>`;
+      }
       
       if (extraInfo.actions && extraInfo.actionTypes && stepIdx < extraInfo.actions.length) {
         const action = extraInfo.actions[stepIdx];
@@ -106,22 +130,59 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
       
       if (node.type === 'pickup') {
         popupContent += `<span style="color: ${COLORS.pickup};">Pickup Point</span><br>`;
+        popupContent += `<b>Status:</b> Package collected<br>`;
       } else if (node.type === 'delivery') {
         popupContent += `<span style="color: ${COLORS.delivery};">Delivery Point</span><br>`;
+        popupContent += `<b>Status:</b> Package delivered<br>`;
       } else if (node.type === 'charging') {
         popupContent += `<span style="color: ${COLORS.charging};">Charging Station</span><br>`;
+        if (stepIdx > 0 && stepIdx < routeIndices.length - 1) {
+          const nextBattery = batteryHistory[stepIdx + 1] || battery;
+          if (nextBattery > battery) {
+            popupContent += `<b>Status:</b> Battery recharged to ${nextBattery.toFixed(1)}%<br>`;
+          }
+        }
       } else if (node.type === 'hubs') {
         if (isStart) {
           popupContent += `<span style="color: ${COLORS.hubs};">Departure Hub</span><br>`;
+          popupContent += `<b>Status:</b> Mission started<br>`;
         } else if (isEnd) {
           popupContent += `<span style="color: ${COLORS.hubs};">Arrival Hub</span><br>`;
+          popupContent += `<b>Status:</b> Mission completed<br>`;
         } else {
           popupContent += `<span style="color: ${COLORS.hubs};">Hub</span><br>`;
+          popupContent += `<b>Status:</b> Transit point<br>`;
         }
+      }
+      
+      // Add cumulative statistics
+      if (stepIdx > 0) {
+        const totalDistance = routeIndices.slice(0, stepIdx + 1).reduce((sum, _, idx) => {
+          if (idx === 0) return 0;
+          const curr = allNodes[routeIndices[idx]];
+          const prev = allNodes[routeIndices[idx - 1]];
+          return sum + Math.sqrt(
+            Math.pow((curr.lat - prev.lat) * 111, 2) + 
+            Math.pow((curr.lng - prev.lng) * 111 * Math.cos(curr.lat * Math.PI / 180), 2)
+          );
+        }, 0);
+        
+        const totalEnergyUsed = 100 - battery;
+        const totalTime = totalDistance / 60;
+        
+        popupContent += `<hr style="margin: 8px 0;">`;
+        popupContent += `<b>Cumulative distance:</b> ${totalDistance.toFixed(2)} km<br>`;
+        popupContent += `<b>Total energy used:</b> ${totalEnergyUsed.toFixed(1)}%<br>`;
+        popupContent += `<b>Total flight time:</b> ${totalTime.toFixed(1)} min<br>`;
       }
       
       popupContent += '</div>';
       stepMarker.bindPopup(popupContent);
+      
+      // Make the marker clickable for detailed info
+      stepMarker.on('click', function() {
+        stepMarker.openPopup();
+      });
       
       if (stepIdx > 0 && !isEnd) {
         const stepLabel = L.divIcon({
@@ -129,7 +190,12 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
           className: 'step-number-label',
           iconSize: [16, 16]
         });
-        L.marker([node.lat, node.lng], { icon: stepLabel }).addTo(routeLayer);
+        const labelMarker = L.marker([node.lat, node.lng], { icon: stepLabel }).addTo(routeLayer);
+        
+        // Also make the label clickable
+        labelMarker.on('click', function() {
+          stepMarker.openPopup();
+        });
       }
     }
   });
