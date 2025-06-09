@@ -20,7 +20,6 @@
       </div>
       
       <div class="sidebar-content">
-        <!-- Départ & Arrivée section placée en haut -->
         <div class="control-section">
           <div class="pickup-delivery-badges">
             <div class="point-badge pickup">
@@ -36,7 +35,6 @@
 
         <div class="divider"></div>
         
-        <!-- Wind Direction at the top -->
         <div class="control-section">
           <h3>Wind Direction</h3>
           <div class="wind-control">
@@ -55,14 +53,13 @@
 
         <div class="divider"></div>
         
-        <!-- Algorithm Selection with toggle style -->
         <div class="control-section">
-          <h3>Algorithme</h3>
+          <h3>Algorithm</h3>
           <div class="algo-row">
-            <div class="algorithm-toggle" data-selected="ppo">
+            <div class="algorithm-toggle" data-selected="ga">
               <div class="algorithm-selector"></div>
-              <div class="algorithm-option" data-value="ga">GA</div>
-              <div class="algorithm-option active" data-value="ppo">PPO</div>
+              <div class="algorithm-option active" data-value="ga">GA</div>
+              <div class="algorithm-option" data-value="ppo">PPO</div>
             </div>
             <span id="run-algo" class="run-btn-icon" title="Run Algorithm">
               <svg viewBox="0 0 24 24" width="26" height="26" style="vertical-align:middle;">
@@ -75,13 +72,11 @@
 
         <div class="divider"></div>
         
-        <!-- Drone Settings -->
         <div class="control-section">
           <h3>Drone Settings</h3>
           
-          <!-- Battery capacity with modern slider -->
           <div class="battery-label">
-            <span>Batterie</span>
+            <span>Battery</span>
             <span id="drone-battery-value">100</span>
           </div>
           
@@ -90,9 +85,8 @@
             <div class="modern-slider-fill" id="battery-slider-fill"></div>
           </div>
           
-          <!-- Package capacity with clickable icons -->
           <div class="package-label">
-            <span>Nombre max colis</span>
+            <span>Max packages</span>
             <span id="drone-payload-value">3</span>
           </div>
           
@@ -127,7 +121,6 @@
                 
         <div class="divider"></div>
 
-        <!-- Layer Visibility -->
         <div class="control-section">
           <h3>Visibility</h3>
           <div class="checkbox-group">
@@ -145,7 +138,6 @@
 
         <div class="divider"></div>
 
-        <!-- Legend -->
         <div class="control-section">
           <h3>Legend</h3>
           <div class="mini-legend" style="font-size:15px;">

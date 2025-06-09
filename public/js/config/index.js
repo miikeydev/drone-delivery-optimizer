@@ -1,8 +1,13 @@
-const path = require('path');
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Try to load dotenv, but don't fail if it's not available
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let dotenvLoaded = false;
 try {
-  require('dotenv').config();
+  console.log('Using default configuration values');
+  dotenvLoaded = true;
 } catch (e) {
   console.log('dotenv not found, using default values');
 }
@@ -30,4 +35,4 @@ const config = {
   }
 };
 
-module.exports = config;
+export default config;
