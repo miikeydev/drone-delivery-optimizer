@@ -1045,13 +1045,13 @@ function placeDefaultPins() {
   console.log("[placeDefaultPins] Starting pin placement...");
   console.log("[placeDefaultPins] Total nodes available:", allNodes.length);
   
-  // Pickup - use random pickup for variety
+  // Pickup - use random pickup for variety (using Math.random for true randomness)
   const pickupNodes = allNodes.filter(n => n.type === 'pickup');
   console.log("[placeDefaultPins] Found pickup nodes:", pickupNodes.length);
   
   if (pickupNodes.length > 0) {
-    // Use random pickup instead of always first one
-    const randomIndex = Math.floor(RNG() * pickupNodes.length);
+    // Use Math.random() instead of RNG() for true randomness on each page load
+    const randomIndex = Math.floor(Math.random() * pickupNodes.length);
     const defaultPickup = pickupNodes[randomIndex];
     console.log("[placeDefaultPins] Selected pickup:", defaultPickup.id, `(index ${randomIndex}/${pickupNodes.length})`);
     
@@ -1100,19 +1100,20 @@ function placeDefaultPins() {
         });
         
         if (distantDeliveries.length > 0) {
-          const randomIndex = Math.floor(RNG() * distantDeliveries.length);
+          // Use Math.random() for true randomness
+          const randomIndex = Math.floor(Math.random() * distantDeliveries.length);
           defaultDelivery = distantDeliveries[randomIndex];
           console.log("[placeDefaultPins] Selected distant delivery:", defaultDelivery.id, `(${distantDeliveries.length} distant options)`);
         } else {
           // Fallback to random delivery if no distant ones
-          const randomIndex = Math.floor(RNG() * deliveryNodes.length);
+          const randomIndex = Math.floor(Math.random() * deliveryNodes.length);
           defaultDelivery = deliveryNodes[randomIndex];
           console.log("[placeDefaultPins] Selected fallback delivery:", defaultDelivery.id);
         }
       }
     } else {
-      // Simple random selection
-      const randomIndex = Math.floor(RNG() * deliveryNodes.length);
+      // Simple random selection with Math.random()
+      const randomIndex = Math.floor(Math.random() * deliveryNodes.length);
       defaultDelivery = deliveryNodes[randomIndex];
       console.log("[placeDefaultPins] Selected random delivery:", defaultDelivery.id);
     }
