@@ -440,9 +440,10 @@ async function generateNetwork() {
         index: index
       })),
       edges: allEdges.map(edge => ({
-        u: edge.source,        // 🔧 FIXED: Keep frontend format for compatibility
-        v: edge.target,        // 🔧 FIXED: Keep frontend format for compatibility  
-        dist: edge.distance,   // 🔧 FIXED: Keep frontend format for compatibility
+        // Primary format for GA compatibility
+        u: edge.source,
+        v: edge.target,
+        dist: edge.distance,
         cost: edge.cost,
         // Also include training format for backward compatibility
         source: edge.source,
@@ -460,6 +461,7 @@ async function generateNetwork() {
     
     // Also log to console for debugging
     console.log('Graph exported:', graphData.nodes.length, 'nodes,', graphData.edges.length, 'edges');
+    console.log('Sample edge format:', graphData.edges[0]); // Debug log
     
     // Draw the graph
     drawGraph(allNodes, allEdges);
@@ -1043,13 +1045,15 @@ function placeDefaultPins() {
   console.log("[placeDefaultPins] Starting pin placement...");
   console.log("[placeDefaultPins] Total nodes available:", allNodes.length);
   
-  // Pickup - use first available pickup for consistency
+  // Pickup - use random pickup for variety
   const pickupNodes = allNodes.filter(n => n.type === 'pickup');
   console.log("[placeDefaultPins] Found pickup nodes:", pickupNodes.length);
   
   if (pickupNodes.length > 0) {
-    const defaultPickup = pickupNodes[0]; // Use first pickup for deterministic behavior
-    console.log("[placeDefaultPins] Selected pickup:", defaultPickup.id);
+    // Use random pickup instead of always first one
+    const randomIndex = Math.floor(RNG() * pickupNodes.length);
+    const defaultPickup = pickupNodes[randomIndex];
+    console.log("[placeDefaultPins] Selected pickup:", defaultPickup.id, `(index ${randomIndex}/${pickupNodes.length})`);
     
     if (pickupMarker) map.removeLayer(pickupMarker);
     pickupMarker = L.marker([defaultPickup.lat, defaultPickup.lng], {
@@ -1059,9 +1063,13 @@ function placeDefaultPins() {
         iconSize: [25, 41],
         iconAnchor: [12, 41],
         popupAnchor: [1, -34],
-      })    }).addTo(map);    pickupNodeId = defaultPickup.id; // Use id for consistency with click handlers
-    updatePickupDisplay(defaultPickup.id); // Display the readable id
-      pickupMarker.on('dragend', function(e) {
+      })
+    }).addTo(map);
+
+    pickupNodeId = defaultPickup.id;
+    updatePickupDisplay(defaultPickup.id);
+
+    pickupMarker.on('dragend', function(e) {
       const pos = e.target.getLatLng();
       const newPickupNode = findClosestNode(pos, pickupNodes);
       if (newPickupNode) {
@@ -1070,18 +1078,44 @@ function placeDefaultPins() {
         pickupMarker.setLatLng([newPickupNode.lat, newPickupNode.lng]);
       }
     });
-    // DON'T fire dragend during initial placement
   } else {
     console.warn("[placeDefaultPins] No pickup nodes found!");
   }
 
-  // Delivery - use first available delivery for consistency
+  // Delivery - use random delivery for variety, but avoid too close to pickup
   const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
   console.log("[placeDefaultPins] Found delivery nodes:", deliveryNodes.length);
   
   if (deliveryNodes.length > 0) {
-    const defaultDelivery = deliveryNodes[0]; // Use first delivery for deterministic behavior
-    console.log("[placeDefaultPins] Selected delivery:", defaultDelivery.id);
+    let defaultDelivery;
+    
+    // Try to find a delivery point that's reasonably far from pickup
+    if (pickupNodes.length > 0 && deliveryNodes.length > 1) {
+      const selectedPickup = pickupNodes.find(p => p.id === pickupNodeId);
+      if (selectedPickup) {
+        // Filter delivery nodes that are at least 50km away from pickup
+        const distantDeliveries = deliveryNodes.filter(d => {
+          const distance = haversineDistance(selectedPickup.lat, selectedPickup.lng, d.lat, d.lng);
+          return distance > 50; // At least 50km apart
+        });
+        
+        if (distantDeliveries.length > 0) {
+          const randomIndex = Math.floor(RNG() * distantDeliveries.length);
+          defaultDelivery = distantDeliveries[randomIndex];
+          console.log("[placeDefaultPins] Selected distant delivery:", defaultDelivery.id, `(${distantDeliveries.length} distant options)`);
+        } else {
+          // Fallback to random delivery if no distant ones
+          const randomIndex = Math.floor(RNG() * deliveryNodes.length);
+          defaultDelivery = deliveryNodes[randomIndex];
+          console.log("[placeDefaultPins] Selected fallback delivery:", defaultDelivery.id);
+        }
+      }
+    } else {
+      // Simple random selection
+      const randomIndex = Math.floor(RNG() * deliveryNodes.length);
+      defaultDelivery = deliveryNodes[randomIndex];
+      console.log("[placeDefaultPins] Selected random delivery:", defaultDelivery.id);
+    }
     
     if (deliveryMarker) map.removeLayer(deliveryMarker);
     deliveryMarker = L.marker([defaultDelivery.lat, defaultDelivery.lng], {
@@ -1091,9 +1125,13 @@ function placeDefaultPins() {
         iconSize: [25, 41],
         iconAnchor: [12, 41],
         popupAnchor: [1, -34],
-      })    }).addTo(map);    deliveryNodeId = defaultDelivery.id; // Use id for consistency with click handlers
-    updateDeliveryDisplay(defaultDelivery.id); // Display the readable id
-      deliveryMarker.on('dragend', function(e) {
+      })
+    }).addTo(map);
+
+    deliveryNodeId = defaultDelivery.id;
+    updateDeliveryDisplay(defaultDelivery.id);
+
+    deliveryMarker.on('dragend', function(e) {
       const pos = e.target.getLatLng();
       const newDeliveryNode = findClosestNode(pos, deliveryNodes);
       if (newDeliveryNode) {
@@ -1102,7 +1140,6 @@ function placeDefaultPins() {
         deliveryMarker.setLatLng([newDeliveryNode.lat, newDeliveryNode.lng]);
       }
     });
-    // DON'T fire dragend during initial placement
   } else {
     console.warn("[placeDefaultPins] No delivery nodes found!");
   }

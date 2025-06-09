@@ -31,22 +31,108 @@ function shuffle(array) {
   return array;
 }
 
-/** Return distance between two node indices using the edge list if available, otherwise haversine */
+/** Return distance between two node indices using ONLY the edge list, no fallback */
 function buildDistanceLookup(nodes, edges) {
   const map = new Map();
+  
+  // Build bidirectional edge map - handle both frontend and backend formats
   for (const e of edges) {
-    const key = `${Math.min(e.u, e.v)}-${Math.max(e.u, e.v)}`;
-    map.set(key, e.dist ?? e.distance);
+    // Handle both formats: {u, v, dist} and {source, target, distance}
+    const u = e.u !== undefined ? e.u : e.source;
+    const v = e.v !== undefined ? e.v : e.target;
+    const distance = e.dist ?? e.distance ?? e.cost;
+    
+    if (u === undefined || v === undefined || distance === undefined) {
+      console.warn('[GA] Invalid edge format:', e);
+      continue;
+    }
+    
+    const key1 = `${u}-${v}`;
+    const key2 = `${v}-${u}`;
+    map.set(key1, distance);
+    map.set(key2, distance);
   }
+  
+  // Build adjacency list for pathfinding
+  const adjacency = new Map();
+  for (let i = 0; i < nodes.length; i++) {
+    adjacency.set(i, []);
+  }
+  
+  for (const e of edges) {
+    // Handle both formats: {u, v, dist} and {source, target, distance}
+    const u = e.u !== undefined ? e.u : e.source;
+    const v = e.v !== undefined ? e.v : e.target;
+    const distance = e.dist ?? e.distance ?? e.cost;
+    
+    if (u === undefined || v === undefined || distance === undefined) {
+      continue; // Skip invalid edges
+    }
+    
+    // Validate node indices
+    if (u >= 0 && u < nodes.length && v >= 0 && v < nodes.length) {
+      adjacency.get(u).push({ node: v, dist: distance });
+      adjacency.get(v).push({ node: u, dist: distance });
+    } else {
+      console.warn(`[GA] Invalid edge node indices: ${u}, ${v} (max: ${nodes.length - 1})`);
+    }
+  }
+  
   return function (u, v) {
     if (u === v) return 0;
-    const key = `${Math.min(u, v)}-${Math.max(u, v)}`;
-    if (map.has(key)) return map.get(key);
-    // fallback to haversine
-    const a = nodes[u];
-    const b = nodes[v];
-    return haversineDistance(a.lat, a.lng, b.lat, b.lng);
+    
+    // Validate node indices
+    if (u < 0 || u >= nodes.length || v < 0 || v >= nodes.length) {
+      console.warn(`[GA] Invalid node indices: ${u}, ${v} (max: ${nodes.length - 1})`);
+      return Infinity;
+    }
+    
+    // Try direct edge first
+    const directKey = `${u}-${v}`;
+    if (map.has(directKey)) {
+      return map.get(directKey);
+    }
+    
+    // Use Dijkstra's algorithm for shortest path
+    return dijkstraDistance(u, v, adjacency);
   };
+}
+
+/** Dijkstra's algorithm to find shortest path distance between two nodes */
+function dijkstraDistance(start, end, adjacency) {
+  if (start === end) return 0;
+  
+  const distances = new Map();
+  const visited = new Set();
+  const queue = [{ node: start, dist: 0 }];
+  
+  distances.set(start, 0);
+  
+  while (queue.length > 0) {
+    // Sort queue by distance (simple priority queue)
+    queue.sort((a, b) => a.dist - b.dist);
+    const { node: current, dist: currentDist } = queue.shift();
+    
+    if (visited.has(current)) continue;
+    visited.add(current);
+    
+    if (current === end) {
+      return currentDist;
+    }
+    
+    const neighbors = adjacency.get(current) || [];
+    for (const { node: neighbor, dist: edgeDist } of neighbors) {
+      if (visited.has(neighbor)) continue;
+      
+      const newDist = currentDist + edgeDist;
+      if (!distances.has(neighbor) || newDist < distances.get(neighbor)) {
+        distances.set(neighbor, newDist);
+        queue.push({ node: neighbor, dist: newDist });
+      }
+    }
+  }
+  
+  return Infinity; // No path found
 }
 
 /** Class implementing the GA */
@@ -82,7 +168,7 @@ export default class GeneticAlgorithm {
       elitismCount = 1,
       // Drone / fitness parameters ↓↓↓
       batteryCapacity = 100,   // arbitrary energy unit
-      kNorm = 1.2,
+      kNorm = 12.0,            // Updated from 1.2 to make energy consumption realistic
       alpha = 0.4,
       cruiseSpeed = 60,        // km/h
       chargeDuration = 0.25,   // h (15 min) per full charge
@@ -122,10 +208,40 @@ export default class GeneticAlgorithm {
       throw new Error('At least one hub is required');
     }
 
-    // Precompute a default start & end hub
-    this.startHub = this.hubs[0];
-    this.endHub = this.hubs[0]; // circular mission default
+    // Choose optimal start and end hubs based on packages
+    if (packages.length > 0) {
+      const firstPackage = packages[0];
+      
+      // Find closest hub to pickup point
+      this.startHub = this._findClosestHub(firstPackage.pickup);
+      // Find closest hub to delivery point  
+      this.endHub = this._findClosestHub(firstPackage.delivery);
+      
+      console.log(`[GA] Selected start hub: ${this.nodes[this.startHub].id} (closest to pickup ${this.nodes[firstPackage.pickup].id})`);
+      console.log(`[GA] Selected end hub: ${this.nodes[this.endHub].id} (closest to delivery ${this.nodes[firstPackage.delivery].id})`);
+    } else {
+      // Fallback to first hub if no packages
+      this.startHub = this.hubs[0];
+      this.endHub = this.hubs[0];
+    }
   }
+
+  /** Find the closest hub to a given node index */
+  _findClosestHub(nodeIndex) {
+    let closestHub = this.hubs[0];
+    let minDistance = this.dist(nodeIndex, closestHub);
+    
+    for (const hubIndex of this.hubs) {
+      const distance = this.dist(nodeIndex, hubIndex);
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestHub = hubIndex;
+      }
+    }
+    
+    return closestHub;
+  }
+
   /* =====================================================
      PUBLIC API
      ===================================================== */  run() {
@@ -321,27 +437,62 @@ export default class GeneticAlgorithm {
     return best;
   }  /** Order‑preserving crossover (OX operator) */
   _crossover(parent1, parent2) {
-    const size = parent1.length;
-    const idx1 = randInt(size);
-    const idx2 = randInt(size);
+    // First validate input parents
+    if (!parent1 || !parent2 || parent1.length < 2 || parent2.length < 2) {
+      console.warn(`[GA] Invalid parents for crossover, using fallback`);
+      return [this._randomRoute(), this._randomRoute()];
+    }
+    
+    // Filter out any invalid nodes from parents before crossover
+    const cleanParent1 = parent1.filter(node => 
+      node !== null && 
+      node !== undefined && 
+      typeof node === 'number' && 
+      node >= 0 && 
+      node < this.nodes.length
+    );
+    
+    const cleanParent2 = parent2.filter(node => 
+      node !== null && 
+      node !== undefined && 
+      typeof node === 'number' && 
+      node >= 0 && 
+      node < this.nodes.length
+    );
+    
+    // If parents are too short after cleaning, use random routes
+    if (cleanParent1.length < 2 || cleanParent2.length < 2) {
+      return [this._randomRoute(), this._randomRoute()];
+    }
+    
+    const size = Math.max(cleanParent1.length, cleanParent2.length);
+    const idx1 = randInt(Math.min(cleanParent1.length, cleanParent2.length));
+    const idx2 = randInt(Math.min(cleanParent1.length, cleanParent2.length));
     const [start, end] = [Math.min(idx1, idx2), Math.max(idx1, idx2)];
 
     const child1 = Array(size).fill(null);
     const child2 = Array(size).fill(null);
 
     // Copy slice from parent into child
-    for (let i = start; i <= end; i++) {
-      child1[i] = parent1[i];
-      child2[i] = parent2[i];
-    }
-
-    // Fill remaining positions preserving order & validity
+    for (let i = start; i <= end && i < cleanParent1.length && i < cleanParent2.length; i++) {
+      child1[i] = cleanParent1[i];
+      child2[i] = cleanParent2[i];
+    }// Fill remaining positions preserving order & validity
     const fillChild = (child, donor, childName) => {
+      // First, ensure donor has only valid nodes
+      const validDonor = donor.filter(node => 
+        node !== null && 
+        node !== undefined && 
+        typeof node === 'number' && 
+        node >= 0 && 
+        node < this.nodes.length
+      );
+      
       // Create a set of already used nodes for fast lookup
       const usedNodes = new Set(child.filter(n => n !== null));
       
       // Create a list of available nodes from donor in order
-      const availableNodes = donor.filter(node => !usedNodes.has(node));
+      const availableNodes = validDonor.filter(node => !usedNodes.has(node));
       
       let availableIdx = 0;
       
@@ -352,18 +503,28 @@ export default class GeneticAlgorithm {
           child[i] = availableNodes[availableIdx];
           availableIdx++;
         } else {
-          // Fallback: use any remaining node from the original parent
-          const allNodes = [...new Set([...parent1, ...parent2])];
+          // Fallback: use any required nodes that might be missing
+          const requiredNodes = new Set([
+            this.startHub, 
+            this.endHub,
+            ...this.packages.map(p => p.pickup),
+            ...this.packages.map(p => p.delivery)
+          ]);
+          
           const currentUsed = new Set(child.filter(n => n !== null));
-          const unusedNode = allNodes.find(n => !currentUsed.has(n));
-          child[i] = unusedNode || donor[i % donor.length]; // Ultimate fallback
+          const missingRequired = [...requiredNodes].find(n => !currentUsed.has(n));
+          
+          if (missingRequired !== undefined) {
+            child[i] = missingRequired;
+          } else {
+            // Very last resort: use start hub to avoid undefined
+            child[i] = this.startHub;
+          }
         }
       }
       
       return this._repairRoute(child);
-    };
-
-    const result = [fillChild(child1, parent2, 'child1'), fillChild(child2, parent1, 'child2')];
+    };    const result = [fillChild(child1, cleanParent2, 'child1'), fillChild(child2, cleanParent1, 'child2')];
     return result;
   }  /** Simple mutation: swap two non‑hub nodes & repair */
   _mutate(route) {
@@ -384,163 +545,235 @@ export default class GeneticAlgorithm {
 
   /* =====================================================
      ROUTE MANIPULATION & VALIDATION
-     ===================================================== */  /** Generate a random valid route obeying pickup‑delivery precedence */
+     ===================================================== */  /** Generate a random valid route obeying pickup‑delivery precedence and hub constraints */
   _randomRoute() {
-    // 1. Start with the list of pickups & deliveries interleaved randomly
-    const core = [];
-    for (const p of this.packages) {
-      // Validate package indices before using them
-      if (p.pickup >= 0 && p.pickup < this.nodes.length && 
-          p.delivery >= 0 && p.delivery < this.nodes.length) {
-        core.push(p.pickup, p.delivery);
+    if (this.packages.length === 0) {
+      console.warn('[GA] No packages defined, creating hub-to-hub route');
+      return [this.startHub, this.endHub];
+    }
+    
+    // Get the first (and likely only) package
+    const package1 = this.packages[0];
+    
+    // Validate package nodes exist
+    if (package1.pickup >= this.nodes.length || package1.delivery >= this.nodes.length) {
+      console.error(`[GA] Invalid package: pickup=${package1.pickup}, delivery=${package1.delivery}, maxIndex=${this.nodes.length - 1}`);
+      return [this.startHub, this.endHub];
+    }
+    
+    // Build route using graph paths
+    const route = [];
+    
+    // 1. Hub to Pickup
+    const hubToPickupPath = this._findGraphPath(this.startHub, package1.pickup);
+    route.push(...hubToPickupPath);
+    
+    // 2. Pickup to Delivery  
+    const pickupToDeliveryPath = this._findGraphPath(package1.pickup, package1.delivery);
+    route.push(...pickupToDeliveryPath.slice(1)); // Skip pickup node (already added)
+    
+    // 3. Delivery to Hub
+    const deliveryToHubPath = this._findGraphPath(package1.delivery, this.endHub);
+    route.push(...deliveryToHubPath.slice(1)); // Skip delivery node (already added)
+    
+    console.log(`[GA] Generated graph-based route: ${route.map(idx => this.nodes[idx].id).join(' → ')}`);
+    return route;
+  }
+
+  /** Ensure route follows hub → pickup → delivery → hub structure with valid graph paths */
+  _repairRoute(route) {
+    // Filter out invalid nodes first
+    const validRoute = route.filter(node => {
+      if (typeof node !== 'number' || node < 0 || node >= this.nodes.length) {
+        console.warn(`[GA] Removing invalid node: ${node}`);
+        return false;
+      }
+      return true;
+    });
+    
+    if (validRoute.length < 2) {
+      console.warn('[GA] Route too short after cleaning, creating minimal route');
+      return this._randomRoute();
+    }
+    
+    // Ensure we have the required structure for single package delivery
+    if (this.packages.length === 0) {
+      return [this.startHub, this.endHub];
+    }
+    
+    const package1 = this.packages[0];
+    
+    // Build route segment by segment using graph paths
+    const repairedRoute = [];
+    const segments = [
+      { from: this.startHub, to: package1.pickup, name: 'hub-to-pickup' },
+      { from: package1.pickup, to: package1.delivery, name: 'pickup-to-delivery' },
+      { from: package1.delivery, to: this.endHub, name: 'delivery-to-hub' }
+    ];
+    
+    repairedRoute.push(this.startHub);
+    
+    for (const segment of segments) {
+      const path = this._findGraphPath(segment.from, segment.to);
+      if (path.length > 1) {
+        // Add path excluding the start node (already in route)
+        repairedRoute.push(...path.slice(1));
+        console.log(`[GA] ${segment.name}: ${path.map(idx => this.nodes[idx].id).join(' → ')}`);
       } else {
-        console.warn(`[GA] Invalid package indices: pickup=${p.pickup}, delivery=${p.delivery}, maxIndex=${this.nodes.length - 1}`);
-      }
-    }
-    shuffle(core);
-
-    // 2. Repair precedence constraint (move delivery after its pickup)
-    for (const { pickup, delivery } of this.packages) {
-      const pIdx = core.indexOf(pickup);
-      const dIdx = core.indexOf(delivery);
-      if (dIdx < pIdx) {
-        core.splice(dIdx, 1);      // remove delivery
-        core.splice(pIdx + 1, 0, delivery); // re‑insert just after pickup
-      }
-    }
-
-    // 3. Basic route: hub -> pickups/deliveries -> hub
-    const basicRoute = [this.startHub, ...core, this.endHub];
-    
-    // 4. Occasionally add a charging station if we have them and route is long
-    if (this.chargingNodes.size > 0 && core.length > 2 && RNG() < 0.2) {
-      const chargingArray = Array.from(this.chargingNodes);
-      const randomCharging = chargingArray[randInt(chargingArray.length)];
-      
-      // Insert charging station at a random position (not at start/end)
-      const insertPos = randInt(core.length) + 1; // +1 to skip start hub
-      basicRoute.splice(insertPos, 0, randomCharging);
-    }
-    
-    return basicRoute;
-  }
-  /** Ensure uniqueness of nodes, pickup -> delivery precedence, keep hubs fixed */
-  _repairRoute(route) {    // Remove duplicates but allow charging stations to be visited multiple times only if needed
-    const seen = new Set([this.startHub, this.endHub]);
-    const cleaned = [this.startHub];
-
-    for (let i = 1; i < route.length - 1; i++) {
-      const node = route[i];
-      
-      // For charging stations, allow reuse only if there's significant distance since last use
-      if (this.chargingNodes.has(node)) {
-        const lastChargingIndex = cleaned.lastIndexOf(node);
-        if (lastChargingIndex === -1 || (cleaned.length - lastChargingIndex) > 2) {
-          // Allow charging station if not used recently or never used
-          cleaned.push(node);
+        console.warn(`[GA] No valid path found for ${segment.name} from ${this.nodes[segment.from].id} to ${this.nodes[segment.to].id}`);
+        // Add destination directly as fallback
+        if (!repairedRoute.includes(segment.to)) {
+          repairedRoute.push(segment.to);
         }
-        // Skip if the same charging station was used very recently
-      } else if (!seen.has(node)) {
-        // For non-charging nodes, ensure uniqueness
-        cleaned.push(node);
-        seen.add(node);
-      }
-    }
-    cleaned.push(this.endHub);
-
-    // Ensure every pickup comes before its delivery
-    for (const { pickup, delivery } of this.packages) {
-      const pIdx = cleaned.indexOf(pickup);
-      const dIdx = cleaned.indexOf(delivery);
-      if (pIdx === -1 && dIdx === -1) {
-        // Neither present (should not happen) – insert both
-        cleaned.splice(cleaned.length - 1, 0, pickup, delivery);
-      } else if (pIdx === -1) {
-        // Only delivery present – insert pickup before it
-        cleaned.splice(dIdx, 0, pickup);
-      } else if (dIdx === -1) {
-        // Only pickup present – insert delivery after
-        cleaned.splice(pIdx + 1, 0, delivery);
-      } else if (dIdx < pIdx) {
-        // Wrong order – move delivery after pickup
-        cleaned.splice(dIdx, 1);
-        cleaned.splice(pIdx + 1, 0, delivery);
       }
     }
     
-    // Add charging stations if battery would be too low
-    return this._addChargingIfNeeded(cleaned);
+    console.log(`[GA] Complete repaired route: ${repairedRoute.map(idx => this.nodes[idx].id).join(' → ')}`);
+    return repairedRoute;
   }
-  /** Add charging stations to the route if battery would run too low */
+
+  /** Find shortest path between two nodes using Dijkstra and return the full path */
+  _findGraphPath(start, end) {
+    if (start === end) return [start];
+    
+    // Build adjacency list if not already built
+    if (!this._adjacencyList) {
+      this._adjacencyList = new Map();
+      for (let i = 0; i < this.nodes.length; i++) {
+        this._adjacencyList.set(i, []);
+      }
+      
+      for (const e of this.edges) {
+        const u = e.u !== undefined ? e.u : e.source;
+        const v = e.v !== undefined ? e.v : e.target;
+        const distance = e.dist ?? e.distance ?? e.cost;
+        
+        if (u >= 0 && u < this.nodes.length && v >= 0 && v < this.nodes.length) {
+          this._adjacencyList.get(u).push({ node: v, dist: distance });
+          this._adjacencyList.get(v).push({ node: u, dist: distance });
+        }
+      }
+    }
+    
+    // Dijkstra with path reconstruction
+    const distances = new Map();
+    const previous = new Map();
+    const visited = new Set();
+    const queue = [{ node: start, dist: 0 }];
+    
+    distances.set(start, 0);
+    
+    while (queue.length > 0) {
+      queue.sort((a, b) => a.dist - b.dist);
+      const { node: current, dist: currentDist } = queue.shift();
+      
+      if (visited.has(current)) continue;
+      visited.add(current);
+      
+      if (current === end) {
+        // Reconstruct path
+        const path = [];
+        let node = end;
+        while (node !== undefined) {
+          path.unshift(node);
+          node = previous.get(node);
+        }
+        console.log(`[GA] Found graph path: ${path.map(idx => this.nodes[idx].id).join(' → ')}`);
+        return path;
+      }
+      
+      const neighbors = this._adjacencyList.get(current) || [];
+      for (const { node: neighbor, dist: edgeDist } of neighbors) {
+        if (visited.has(neighbor)) continue;
+        
+        const newDist = currentDist + edgeDist;
+        if (!distances.has(neighbor) || newDist < distances.get(neighbor)) {
+          distances.set(neighbor, newDist);
+          previous.set(neighbor, current);
+          queue.push({ node: neighbor, dist: newDist });
+        }
+      }
+    }
+    
+    console.warn(`[GA] No graph path found from ${this.nodes[start].id} to ${this.nodes[end].id}`);
+    return [start, end]; // Fallback to direct connection
+  }
+
+  /** Add charging stations to ensure graph connectivity */
   _addChargingIfNeeded(route) {
     if (this.chargingNodes.size === 0) return route;
     
-    const enhanced = [route[0]]; // Start with hub
+    const enhanced = [];
     let currentBattery = this.batteryCapacity;
     let payload = 0;
-    const chargingArray = Array.from(this.chargingNodes);
     
-    for (let i = 1; i < route.length; i++) {
-      const fromNode = route[i - 1];
-      const toNode = route[i];
+    for (let i = 0; i < route.length; i++) {
+      const currentNode = route[i];
+      enhanced.push(currentNode);
       
-      // Validate node indices
-      if (fromNode >= this.nodes.length || toNode >= this.nodes.length) {
-        console.warn(`[GA] Invalid node in route: ${fromNode} -> ${toNode}`);
-        continue;
+      // Update payload at current node
+      if (this.weightByPickup.has(currentNode)) {
+        payload += this.weightByPickup.get(currentNode);
       }
-      
-      const distance = this.dist(fromNode, toNode);
-      const energyNeeded = distance / this.kNorm * (1 + this.alpha * payload);
-      
-      // Check if we need charging before this leg (with safety margin)
-      if (currentBattery < energyNeeded * 1.3 && chargingArray.length > 0) {
-        // Find closest charging station that we haven't just visited
-        let closestCharging = null;
-        let minChargingDist = Infinity;
-        const lastNode = enhanced[enhanced.length - 1];
-        
-        for (const chargingNode of chargingArray) {
-          // Don't use the same charging station we just visited
-          if (chargingNode === lastNode) continue;
-          
-          const distToCharging = this.dist(fromNode, chargingNode);
-          if (distToCharging < minChargingDist && distToCharging < distance) {
-            minChargingDist = distToCharging;
-            closestCharging = chargingNode;
-          }
-        }
-        
-        // Only add charging if it's actually helpful and closer than destination
-        if (closestCharging !== null && minChargingDist < distance * 0.8) {
-          enhanced.push(closestCharging);
-          currentBattery = this.batteryCapacity; // Full charge
-          // Recalculate energy needed from charging station to destination
-          const newDistance = this.dist(closestCharging, toNode);
-          const newEnergyNeeded = newDistance / this.kNorm * (1 + this.alpha * payload);
-          currentBattery -= newEnergyNeeded;
-        } else {
-          // Continue without charging and let fitness function penalize if needed
-          currentBattery -= energyNeeded;
-        }
-      } else {
-        currentBattery -= energyNeeded;
-      }
-      
-      enhanced.push(toNode);
-      
-      // Update payload
-      if (this.weightByPickup.has(toNode)) {
-        payload += this.weightByPickup.get(toNode);
-      }
-      if (this.weightByDelivery.has(toNode)) {
-        payload -= this.weightByDelivery.get(toNode);
+      if (this.weightByDelivery.has(currentNode)) {
+        payload -= this.weightByDelivery.get(currentNode);
         payload = Math.max(0, payload);
       }
       
-      // Handle charging point
-      if (this.chargingNodes.has(toNode)) {
+      // Recharge if at charging station
+      if (this.chargingNodes.has(currentNode)) {
         currentBattery = this.batteryCapacity;
+      }
+      
+      // Check if we need charging for next leg
+      if (i < route.length - 1) {
+        const nextNode = route[i + 1];
+        const distance = this.dist(currentNode, nextNode);
+        
+        if (distance !== Infinity) {
+          // Calculate energy needed for next leg
+          const energyNeeded = distance / this.kNorm * (1 + this.alpha * payload);
+          
+          // Add charging if battery would be critically low
+          if (currentBattery < energyNeeded * 1.5 && this.chargingNodes.size > 0) {
+            // Find path through charging station
+            let bestChargingPath = null;
+            let shortestPathLength = Infinity;
+            
+            for (const chargingNode of this.chargingNodes) {
+              if (chargingNode === currentNode || chargingNode === nextNode) continue;
+              
+              const pathToCharging = this._findGraphPath(currentNode, chargingNode);
+              const pathFromCharging = this._findGraphPath(chargingNode, nextNode);
+              
+              if (pathToCharging.length > 1 && pathFromCharging.length > 1) {
+                const totalPathLength = pathToCharging.length + pathFromCharging.length - 1;
+                if (totalPathLength < shortestPathLength) {
+                  shortestPathLength = totalPathLength;
+                  bestChargingPath = {
+                    toCharging: pathToCharging,
+                    fromCharging: pathFromCharging,
+                    chargingNode
+                  };
+                }
+              }
+            }
+            
+            if (bestChargingPath) {
+              console.log(`[GA] Adding charging detour: ${this.nodes[bestChargingPath.chargingNode].id}`);
+              // Insert charging path
+              enhanced.push(...bestChargingPath.toCharging.slice(1)); // Skip current node
+              enhanced.push(...bestChargingPath.fromCharging.slice(1, -1)); // Skip charging and next nodes
+              currentBattery = this.batteryCapacity; // Recharge
+              
+              // Skip adding the next node directly since we'll get there through the path
+              return enhanced.concat(route.slice(i + 2));
+            }
+          }
+          
+          // Update battery for next leg
+          currentBattery -= energyNeeded;
+        }
       }
     }
     
