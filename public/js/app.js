@@ -2,7 +2,7 @@
 // Importing CONFIG for potential future use and to document dependency
 import { pickCityPoints, CONFIG } from '/js/city-picker.js';
 import { haversineDistance, gaussianRandom, rgbToHex, RNG, insideFrance, setFrancePolygon } from './utils.js';
-import { GeneticAlgorithm } from './GA.js';
+import GeneticAlgorithm from './GA.js';
 
 // Map initialization code - only once
 const map = L.map('map').setView([46.6, 2.3], 6);
@@ -322,10 +322,11 @@ async function generateNetwork() {
       highlightedNodeId = highlightedNodeId === nodeIndex ? null : nodeIndex;
       highlightNodeConnections(highlightedNodeId);
     });
-    
-    // Add to nodes array
+      // Add to nodes array
+    const nodeIndex = allNodes.length; // Get index before pushing
     allNodes.push({
       id: id,
+      index: nodeIndex,
       lat: latlng[0],
       lng: latlng[1],
       type: 'hubs'
@@ -351,9 +352,10 @@ async function generateNetwork() {
       highlightedNodeId = highlightedNodeId === nodeIndex ? null : nodeIndex;
       highlightNodeConnections(highlightedNodeId);
     });
-    
+      const nodeIndex = allNodes.length; // Get index before pushing
     allNodes.push({
       id: id,
+      index: nodeIndex,
       lat: latlng[0],
       lng: latlng[1],
       type: 'charging'
@@ -378,9 +380,10 @@ async function generateNetwork() {
       highlightedNodeId = highlightedNodeId === nodeIndex ? null : nodeIndex;
       highlightNodeConnections(highlightedNodeId);
     });
-    
+      const nodeIndex = allNodes.length; // Get index before pushing
     allNodes.push({
       id: id,
+      index: nodeIndex,
       lat: latlng[0],
       lng: latlng[1],
       type: 'delivery'
@@ -405,9 +408,10 @@ async function generateNetwork() {
       highlightedNodeId = highlightedNodeId === nodeIndex ? null : nodeIndex;
       highlightNodeConnections(highlightedNodeId);
     });
-    
+      const nodeIndex = allNodes.length; // Get index before pushing
     allNodes.push({
       id: id,
+      index: nodeIndex,
       lat: latlng[0],
       lng: latlng[1],
       type: 'pickup'
@@ -510,20 +514,40 @@ function runAlgorithm() {
   
   // Handle GA algorithm locally
   if (algorithm === 'ga') {
-    try {
-      console.log('[GA] Starting local genetic algorithm...');
-      console.log(`[GA] Pickup: ${pickupNodeId}, Delivery: ${deliveryNodeId}`);
+    try {      console.log('[GA] Starting local genetic algorithm...');      console.log(`[GA] Pickup ID: ${pickupNodeId}, Delivery ID: ${deliveryNodeId}`);
       console.log(`[GA] Battery: ${batteryCapacity}%, Max Payload: ${maxPayload}kg`);
       
+      // Find node indices from node IDs
+      const pickupNode = allNodes.find(n => n.id === pickupNodeId);
+      const deliveryNode = allNodes.find(n => n.id === deliveryNodeId);
+      
+      if (!pickupNode || !deliveryNode) {
+        throw new Error(`Could not find nodes: pickup=${pickupNodeId}, delivery=${deliveryNodeId}`);
+      }
+      
+      console.log(`[GA] Pickup Index: ${pickupNode.index}, Delivery Index: ${deliveryNode.index}`);
+      
+      // Create packages array in the format expected by GA (using indices)
+      const packages = [{
+        pickup: pickupNode.index,
+        delivery: deliveryNode.index,
+        weight: 1 // Default weight
+      }];
+      
+      // Create options object with drone parameters
+      const options = {
+        batteryCapacity: batteryCapacity,
+        maxPayload: maxPayload
+      };
+        console.log('[GA] Creating GeneticAlgorithm instance...');
       const ga = new GeneticAlgorithm(
         allNodes, 
         allEdges, 
-        pickupNodeId, 
-        deliveryNodeId, 
-        batteryCapacity, 
-        maxPayload
+        packages,
+        options
       );
       
+      console.log('[GA] GA instance created successfully, running algorithm...');
       const result = ga.run();
       
       console.log('[GA] Algorithm completed:', result);
@@ -996,15 +1020,15 @@ function updateDeliveryDisplay(text) {
 // Fonction utilitaire pour trouver le nœud le plus proche d'une position
 function findClosestNode(latlng, nodes) {
   let minDist = Infinity;
-  let closestId = null;
+  let closestNode = null;
   nodes.forEach(node => {
     const dist = map.distance(latlng, [node.lat, node.lng]);
     if (dist < minDist) {
       minDist = dist;
-      closestId = node.id;
+      closestNode = node;
     }
   });
-  return closestId;
+  return closestNode;
 }
 
 // Positionne les pins sur des points aléatoires après la génération du réseau
@@ -1028,21 +1052,18 @@ function placeDefaultPins() {
         iconSize: [25, 41],
         iconAnchor: [12, 41],
         popupAnchor: [1, -34],
-      })
-    }).addTo(map);
-    pickupNodeId = randomPickup.id;
-    updatePickupDisplay(pickupNodeId);
-    
-    pickupMarker.on('dragend', function(e) {
+      })    }).addTo(map);    pickupNodeId = randomPickup.id; // Use id for consistency with click handlers
+    updatePickupDisplay(randomPickup.id); // Display the readable id
+      pickupMarker.on('dragend', function(e) {
       const pos = e.target.getLatLng();
-      const newPickupId = findClosestNode(pos, pickupNodes);
-      pickupNodeId = newPickupId;
-      updatePickupDisplay(pickupNodeId !== null ? pickupNodeId : '–');
-      const node = pickupNodes.find(n => n.id === pickupNodeId);
-      if (node) {
-        pickupMarker.setLatLng([node.lat, node.lng]);
+      const newPickupNode = findClosestNode(pos, pickupNodes);
+      if (newPickupNode) {
+        pickupNodeId = newPickupNode.id;
+        updatePickupDisplay(newPickupNode.id);
+        pickupMarker.setLatLng([newPickupNode.lat, newPickupNode.lng]);
       }
     });
+    // DON'T fire dragend during initial placement
   } else {
     console.warn("[placeDefaultPins] No pickup nodes found!");
   }
@@ -1063,21 +1084,18 @@ function placeDefaultPins() {
         iconSize: [25, 41],
         iconAnchor: [12, 41],
         popupAnchor: [1, -34],
-      })
-    }).addTo(map);
-    deliveryNodeId = randomDelivery.id;
-    updateDeliveryDisplay(deliveryNodeId);
-    
-    deliveryMarker.on('dragend', function(e) {
+      })    }).addTo(map);    deliveryNodeId = randomDelivery.id; // Use id for consistency with click handlers
+    updateDeliveryDisplay(randomDelivery.id); // Display the readable id
+      deliveryMarker.on('dragend', function(e) {
       const pos = e.target.getLatLng();
-      const newDeliveryId = findClosestNode(pos, deliveryNodes);
-      deliveryNodeId = newDeliveryId;
-      updateDeliveryDisplay(deliveryNodeId !== null ? deliveryNodeId : '–');
-      const node = deliveryNodes.find(n => n.id === deliveryNodeId);
-      if (node) {
-        deliveryMarker.setLatLng([node.lat, node.lng]);
+      const newDeliveryNode = findClosestNode(pos, deliveryNodes);
+      if (newDeliveryNode) {
+        deliveryNodeId = newDeliveryNode.id;
+        updateDeliveryDisplay(newDeliveryNode.id);
+        deliveryMarker.setLatLng([newDeliveryNode.lat, newDeliveryNode.lng]);
       }
     });
+    // DON'T fire dragend during initial placement
   } else {
     console.warn("[placeDefaultPins] No delivery nodes found!");
   }
@@ -1097,21 +1115,20 @@ pickupLayer.on('click', (e) => {
       iconSize: [25, 41],
       iconAnchor: [12, 41],
       popupAnchor: [1, -34],
-    })
-  }).addTo(map);
-  pickupNodeId = findClosestNode(latlng, pickupNodes);
+    })  }).addTo(map);
+  const pickupNode = findClosestNode(latlng, pickupNodes);
+  pickupNodeId = pickupNode ? pickupNode.id : null;
   updatePickupDisplay(pickupNodeId !== null ? pickupNodeId : '–');
-  
-  pickupMarker.on('dragend', function(e) {
+    pickupMarker.on('dragend', function(e) {
     const pos = e.target.getLatLng();
-    pickupNodeId = findClosestNode(pos, pickupNodes);
-    updatePickupDisplay(pickupNodeId !== null ? pickupNodeId : '–');
+    const pickupNode = findClosestNode(pos, pickupNodes);
+    pickupNodeId = pickupNode ? pickupNode.id : null;    updatePickupDisplay(pickupNodeId !== null ? pickupNodeId : '–');
     const node = pickupNodes.find(n => n.id === pickupNodeId);
     if (node) {
       pickupMarker.setLatLng([node.lat, node.lng]);
     }
   });
-  pickupMarker.fire('dragend');
+  // DON'T fire dragend automatically during click - causes ID inconsistency
 });
 
 deliveryLayer.on('click', (e) => {
@@ -1125,19 +1142,19 @@ deliveryLayer.on('click', (e) => {
       iconSize: [25, 41],
       iconAnchor: [12, 41],
       popupAnchor: [1, -34],
-    })
-  }).addTo(map);
-  deliveryNodeId = findClosestNode(latlng, deliveryNodes);
+    })  }).addTo(map);
+  const deliveryNode = findClosestNode(latlng, deliveryNodes);
+  deliveryNodeId = deliveryNode ? deliveryNode.id : null;
   updateDeliveryDisplay(deliveryNodeId !== null ? deliveryNodeId : '–');
-  
-  deliveryMarker.on('dragend', function(e) {
+    deliveryMarker.on('dragend', function(e) {
     const pos = e.target.getLatLng();
-    deliveryNodeId = findClosestNode(pos, deliveryNodes);
+    const deliveryNode = findClosestNode(pos, deliveryNodes);
+    deliveryNodeId = deliveryNode ? deliveryNode.id : null;
     updateDeliveryDisplay(deliveryNodeId !== null ? deliveryNodeId : '–');
     const node = deliveryNodes.find(n => n.id === deliveryNodeId);
     if (node) {
       deliveryMarker.setLatLng([node.lat, node.lng]);
     }
   });
-  deliveryMarker.fire('dragend');
+  // DON'T fire dragend automatically during click - causes ID inconsistency
 });

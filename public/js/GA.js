@@ -1,1151 +1,582 @@
-/**
- * Genetic Algorithm for Drone Delivery Path Optimization
- * Finds optimal routes considering battery consumption, payload, and weather conditions
+/*
+ * Genetic Algorithm for Drone Delivery Route Optimisation
+ * -------------------------------------------------------
+ * An ES‑module that exports a single class `GeneticAlgorithm`.
+ *
+ *  ‣ Dependencies: utils.js (haversineDistance, gaussianRandom, RNG)
+ *  ‣ External data: `nodes`, `edges` (same structure as graphData)
+ *  ‣ Optionally: an array `packages` = [{ pickup: idx, delivery: idx, weight: kg }]
+ *
+ *  A chromosome is a valid route (array of node indices) that:
+ *    • starts at a hub, ends at a hub
+ *    • contains every pickup exactly once and its delivery **after** the pickup
+ *    • may include charging nodes any number of times (or none)
+ *
+ *  Fitness combines: total energy, distance, mission time, penalties (infeasible).
  */
 
-// GA Configuration
-const GA_CONFIG = {
-  POPULATION_SIZE: 30,
-  GENERATIONS: 50,
-  MUTATION_RATE: 0.2,
-  CROSSOVER_RATE: 0.8,
-  ELITE_SIZE: 3,
-  TOURNAMENT_SIZE: 3,
-  
-  // Battery consumption parameters
-  K_NORM: 1.2,
-  ALPHA: 0.4,
-  
-  // Constraints
-  MAX_ROUTE_LENGTH: 15,
-  BATTERY_PENALTY: 1000,
-  INVALID_ROUTE_PENALTY: 10000,  // INCREASED: was 5000
-  MISSION_FAILURE_PENALTY: 50000  // NEW: Very high penalty for mission failure
-};
+import { haversineDistance, RNG } from './utils.js';
 
-/**
- * Individual representation of a route
- * Route structure: [startHub, ...intermediateNodes..., pickupNode, ...intermediateNodes..., deliveryNode, ...intermediateNodes..., endHub]
- */
-class Individual {
-  constructor(route = []) {
-    this.route = route;
-    this.fitness = null;
-    this.batteryHistory = [];
-    this.isValid = false;
-  }
-
-  copy() {
-    const newIndividual = new Individual([...this.route]);
-    newIndividual.fitness = this.fitness;
-    newIndividual.batteryHistory = [...this.batteryHistory];
-    newIndividual.isValid = this.isValid;
-    return newIndividual;
-  }
+/** Helper — random integer in [0, max) */
+function randInt(max) {
+  return Math.floor(RNG() * max);
 }
 
-/**
- * Main Genetic Algorithm class
- */
-export class GeneticAlgorithm {
-  constructor(nodes, edges, pickupNodeId, deliveryNodeId, batteryCapacity = 100, maxPayload = 3) {
+/** Fisher‑Yates shuffle (in‑place) */
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = randInt(i + 1);
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+/** Return distance between two node indices using the edge list if available, otherwise haversine */
+function buildDistanceLookup(nodes, edges) {
+  const map = new Map();
+  for (const e of edges) {
+    const key = `${Math.min(e.u, e.v)}-${Math.max(e.u, e.v)}`;
+    map.set(key, e.dist ?? e.distance);
+  }
+  return function (u, v) {
+    if (u === v) return 0;
+    const key = `${Math.min(u, v)}-${Math.max(u, v)}`;
+    if (map.has(key)) return map.get(key);
+    // fallback to haversine
+    const a = nodes[u];
+    const b = nodes[v];
+    return haversineDistance(a.lat, a.lng, b.lat, b.lng);
+  };
+}
+
+/** Class implementing the GA */
+export default class GeneticAlgorithm {
+  /**
+   * @param {Array} nodes   – graph nodes as given by graphData
+   * @param {Array} edges   – graph edges as given by graphData
+   * @param {Array} packages – [{ pickup: idx, delivery: idx, weight: kg }]
+   * @param {Object} opts   – GA & drone parameters
+   */
+  constructor(nodes, edges, packages = [], opts = {}) {
+    // Data ------------------------------------------------
     this.nodes = nodes;
     this.edges = edges;
-    this.edgeMap = this.buildEdgeMap(edges);
-    this.pickupNodeId = pickupNodeId;
-    this.deliveryNodeId = deliveryNodeId;
+    this.packages = packages;
+
+    // Build quick look‑ups -------------------------------
+    this.dist = buildDistanceLookup(nodes, edges);
+    // Map delivery → pickup weight for quick access
+    this.weightByPickup = new Map();
+    this.weightByDelivery = new Map();
+    for (const p of packages) {
+      const w = p.weight ?? 1;
+      this.weightByPickup.set(p.pickup, w);
+      this.weightByDelivery.set(p.delivery, w);
+    }    // GA parameters --------------------------------------
+    const {
+      populationSize = 50,     // Reduced from 100
+      generations = 50,        // Reduced from 500 for faster testing
+      crossoverRate = 0.8,
+      mutationRate = 0.2,
+      tournamentSize = 3,
+      elitismCount = 1,
+      // Drone / fitness parameters ↓↓↓
+      batteryCapacity = 100,   // arbitrary energy unit
+      kNorm = 1.2,
+      alpha = 0.4,
+      cruiseSpeed = 60,        // km/h
+      chargeDuration = 0.25,   // h (15 min) per full charge
+      weights = { energy: 1, distance: 0.05, time: 0.1 },
+    } = opts;
+
+    this.popSize = populationSize;
+    this.generations = generations;
+    this.crossoverRate = crossoverRate;
+    this.mutationRate = mutationRate;
+    this.tournamentSize = tournamentSize;
+    this.elitismCount = elitismCount;
+
+    // Drone parameters
     this.batteryCapacity = batteryCapacity;
-    this.maxPayload = maxPayload;
-    
-    // Find node indices with extensive debugging
-    this.pickupIndex = nodes.findIndex(n => n.id === pickupNodeId);
-    this.deliveryIndex = nodes.findIndex(n => n.id === deliveryNodeId);
-    this.hubIndices = nodes.map((n, i) => n.type === 'hubs' ? i : -1).filter(i => i >= 0);
-    this.chargingIndices = nodes.map((n, i) => n.type === 'charging' ? i : -1).filter(i => i >= 0);
-    
-    // CRITICAL DEBUG: Verify node mapping integrity
-    console.log(`[GA] 🔍 DEBUGGING NODE MAPPING:`);
-    console.log(`[GA]   Target pickup: "${pickupNodeId}" → index ${this.pickupIndex}`);
-    console.log(`[GA]   Target delivery: "${deliveryNodeId}" → index ${this.deliveryIndex}`);
-    
-    if (this.pickupIndex >= 0) {
-      const actualPickupNode = nodes[this.pickupIndex];
-      console.log(`[GA]   Pickup node at index ${this.pickupIndex}: "${actualPickupNode?.id}" (type: ${actualPickupNode?.type})`);
-    }
-    
-    if (this.deliveryIndex >= 0) {
-      const actualDeliveryNode = nodes[this.deliveryIndex];
-      console.log(`[GA]   Delivery node at index ${this.deliveryIndex}: "${actualDeliveryNode?.id}" (type: ${actualDeliveryNode?.type})`);
-    }
-    
-    // Verify no duplicate IDs
-    const idCounts = {};
-    nodes.forEach((node, idx) => {
-      idCounts[node.id] = (idCounts[node.id] || 0) + 1;
-      if (idCounts[node.id] > 1) {
-        console.error(`[GA] 🚨 DUPLICATE ID DETECTED: "${node.id}" appears multiple times!`);
-      }
-    });
-    
-    // List all pickup and delivery nodes for verification
-    const allPickups = nodes.filter(n => n.type === 'pickup').map((n, i) => `"${n.id}":${nodes.indexOf(n)}`);
-    const allDeliveries = nodes.filter(n => n.type === 'delivery').map((n, i) => `"${n.id}":${nodes.indexOf(n)}`);
-    console.log(`[GA]   All pickup nodes: ${allPickups.join(', ')}`);
-    console.log(`[GA]   All delivery nodes: ${allDeliveries.join(', ')}`);
-    
-    console.log(`[GA] Initialized - Pickup: ${pickupNodeId} (${this.pickupIndex}), Delivery: ${deliveryNodeId} (${this.deliveryIndex})`);
-    console.log(`[GA] Hubs: ${this.hubIndices.length}, Charging: ${this.chargingIndices.length}`);
-  }
+    this.kNorm = kNorm;
+    this.alpha = alpha;
+    this.cruiseSpeed = cruiseSpeed;
+    this.chargeDuration = chargeDuration;
+    this.weights = weights;    // Determine hubs, pickups, deliveries & charging nodes
+    console.log('[GA] Analyzing node types...');
+    this.hubs = nodes.filter(n => n.type === 'hubs').map(n => n.index);
+    this.chargingNodes = new Set(nodes.filter(n => n.type === 'charging').map(n => n.index));
+    const pickupsIdx = new Set(packages.map(p => p.pickup));
+    const deliveriesIdx = new Set(packages.map(p => p.delivery));
 
-  buildEdgeMap(edges) {
-    const map = new Map();
-    const adjacencyList = new Map();
-    
-    // Build both edge map and adjacency list
-    edges.forEach(edge => {
-      const key = `${edge.source}-${edge.target}`;
-      map.set(key, edge);
-      
-      // Add to adjacency list
-      if (!adjacencyList.has(edge.source)) {
-        adjacencyList.set(edge.source, []);
-      }
-      adjacencyList.get(edge.source).push(edge.target);
-      
-      // Add reverse direction if not exists
-      const reverseKey = `${edge.target}-${edge.source}`;
-      if (!map.has(reverseKey)) {
-        const reverseEdge = {
-          source: edge.target,
-          target: edge.source,
-          distance: edge.distance,
-          cost: edge.cost
-        };
-        map.set(reverseKey, reverseEdge);
-        
-        // Add to adjacency list
-        if (!adjacencyList.has(edge.target)) {
-          adjacencyList.set(edge.target, []);
-        }
-        adjacencyList.get(edge.target).push(edge.source);
-      }
-    });
-    
-    this.adjacencyList = adjacencyList;
-    return map;
-  }
+    this.pickups = Array.from(pickupsIdx);
+    this.deliveries = Array.from(deliveriesIdx);
 
-  /**
-   * Find a valid path between two nodes using BFS
-   */
-  findPath(startIndex, endIndex, maxLength = 5) {
-    if (startIndex === endIndex) return [startIndex];
+    console.log('[GA] Node analysis:');
+    console.log('  - Hubs found:', this.hubs.length, 'indices:', this.hubs.slice(0, 5));
+    console.log('  - Charging nodes:', this.chargingNodes.size);
+    console.log('  - Pickup nodes:', this.pickups.length, 'indices:', this.pickups);
+    console.log('  - Delivery nodes:', this.deliveries.length, 'indices:', this.deliveries);
+
+    if (this.hubs.length === 0) {
+      throw new Error('At least one hub is required');
+    }
+
+    // Precompute a default start & end hub
+    this.startHub = this.hubs[0];
+    this.endHub = this.hubs[0]; // circular mission default
+  }
+  /* =====================================================
+     PUBLIC API
+     ===================================================== */  run() {
+    console.log('[GA] Starting algorithm with', this.generations, 'generations...');
+    console.log('[GA] Population size:', this.popSize);
+    console.log('[GA] Packages:', this.packages);
     
-    const queue = [[startIndex]];
-    const visited = new Set();
+    const algorithmStart = performance.now();
     
-    while (queue.length > 0) {
-      const path = queue.shift();
-      const currentNode = path[path.length - 1];
+    try {
+      console.log('[GA] Creating initial population...');
+      this.population = this._initialPopulation();
+      console.log('[GA] Initial population created with', this.population.length, 'individuals');
+    } catch (error) {
+      console.error('[GA] Error creating initial population:', error);
+      throw error;
+    }
+
+    for (let gen = 0; gen < this.generations; gen++) {
+      const genStart = performance.now();
+      console.log(`[GA] Generation ${gen + 1}/${this.generations}`);
       
-      if (path.length > maxLength) continue;
-      
-      if (visited.has(currentNode)) continue;
-      visited.add(currentNode);
-      
-      const neighbors = this.adjacencyList.get(currentNode) || [];
-      
-      for (const neighbor of neighbors) {
-        if (path.includes(neighbor)) continue; // Avoid cycles
-        
-        const newPath = [...path, neighbor];
-        
-        if (neighbor === endIndex) {
-          return newPath;
-        }
-        
-        if (newPath.length < maxLength) {
-          queue.push(newPath);
-        }
+      try {
+        this._evaluatePopulation();
+      } catch (error) {
+        console.error(`[GA] Error evaluating population at generation ${gen}:`, error);
+        throw error;
       }
-    }
-    
-    // If no path found, return direct connection if it exists
-    const neighbors = this.adjacencyList.get(startIndex) || [];
-    if (neighbors.includes(endIndex)) {
-      return [startIndex, endIndex];
-    }
-    
-    return null; // No path found
-  }
-
-  /**
-   * Generate a random valid route following graph connections
-   */
-  generateRandomRoute() {
-    // Choose start hub close to pickup point
-    const startHub = this.selectClosestHub(this.pickupIndex);
-    // Choose end hub close to delivery point  
-    const endHub = this.selectClosestHub(this.deliveryIndex);
-    
-    // Build route using only valid graph paths
-    const fullRoute = this.buildCompleteValidRoute(startHub, endHub);
-    
-    return new Individual(fullRoute);
-  }
-
-  /**
-   * Build a complete valid route that MUST follow graph edges AND ensure sufficient battery
-   */
-  buildCompleteValidRoute(startHub, endHub) {
-    let route = [];
-    
-    console.log(`[GA] 🎯 Building route: Hub ${this.nodes[startHub]?.id} → ${this.pickupNodeId} (idx:${this.pickupIndex}) → ${this.deliveryNodeId} (idx:${this.deliveryIndex}) → Hub ${this.nodes[endHub]?.id}`);
-    
-    // CRITICAL: Verify pickup and delivery indices are correct
-    if (this.pickupIndex < 0) {
-      console.error(`[GA] 🚨 INVALID PICKUP INDEX: ${this.pickupIndex} for ID ${this.pickupNodeId}`);
-      return [startHub, endHub]; // Emergency fallback
-    }
-    
-    if (this.deliveryIndex < 0) {
-      console.error(`[GA] 🚨 INVALID DELIVERY INDEX: ${this.deliveryIndex} for ID ${this.deliveryNodeId}`);
-      return [startHub, endHub]; // Emergency fallback
-    }
-    
-    // Step 1: Build path from start hub to pickup with battery consideration
-    const pathToPickup = this.buildBatteryAwarePath(startHub, this.pickupIndex, 0); // No payload initially
-    if (pathToPickup && pathToPickup.length > 0) {
-      route.push(...pathToPickup);
-      console.log(`[GA] ✅ Added battery-aware path to pickup (${pathToPickup.length} nodes): ${pathToPickup.map(i => this.nodes[i]?.id).join(' → ')}`);
-    } else {
-      // Force direct connection - this ensures pickup is ALWAYS included
-      route = [startHub, this.pickupIndex];
-      console.log(`[GA] ⚠️  FORCED direct hub→pickup connection as fallback`);
-    }
-    
-    // CRITICAL: Double-check pickup is in the route
-    if (!route.includes(this.pickupIndex)) {
-      console.warn(`[GA] 🚨 PICKUP MISSING! Force-adding at position 1`);
-      route.splice(1, 0, this.pickupIndex);
-    }
-    
-    // Step 2: Build path from pickup to delivery with payload consideration
-    console.log(`[GA] 🎯 Now adding delivery ${this.deliveryNodeId} (idx:${this.deliveryIndex}) with payload`);
-    
-    const pathToDelivery = this.buildBatteryAwarePath(this.pickupIndex, this.deliveryIndex, this.maxPayload);
-    if (pathToDelivery && pathToDelivery.length > 1) {
-      route.push(...pathToDelivery.slice(1)); // Skip pickup (already included)
-      console.log(`[GA] ✅ Added battery-aware path pickup→delivery (${pathToDelivery.length - 1} new nodes): ${pathToDelivery.slice(1).map(i => this.nodes[i]?.id).join(' → ')}`);
-    } else {
-      // Force direct connection
-      route.push(this.deliveryIndex);
-      console.log(`[GA] ⚠️  FORCED direct pickup→delivery connection as last resort`);
-    }
-    
-    // CRITICAL: Double-check delivery is in the route BEFORE adding end hub
-    if (!route.includes(this.deliveryIndex)) {
-      console.error(`[GA] 🚨 DELIVERY MISSING! Force-adding before end hub`);
-      route.push(this.deliveryIndex);
-    }
-    
-    // Step 3: Build path from delivery to end hub (no payload)
-    const pathToEnd = this.buildBatteryAwarePath(this.deliveryIndex, endHub, 0);
-    if (pathToEnd && pathToEnd.length > 1) {
-      route.push(...pathToEnd.slice(1));
-      console.log(`[GA] ✅ Added battery-aware path delivery→end hub (${pathToEnd.length - 1} new nodes): ${pathToEnd.slice(1).map(i => this.nodes[i]?.id).join(' → ')}`);
-    } else {
-      // Force direct connection to end hub
-      route.push(endHub);
-      console.log(`[GA] ⚠️  FORCED direct delivery→hub connection`);
-    }
-    
-    // Final comprehensive verification
-    const hasPickupFinal = route.includes(this.pickupIndex);
-    const hasDeliveryFinal = route.includes(this.deliveryIndex);
-    const pickupPos = route.indexOf(this.pickupIndex);
-    const deliveryPos = route.indexOf(this.deliveryIndex);
-    
-    console.log(`[GA] 🔍 Final route verification:`);
-    console.log(`[GA]   Pickup ${this.pickupNodeId}: ${hasPickupFinal} (position ${pickupPos})`);
-    console.log(`[GA]   Delivery ${this.deliveryNodeId}: ${hasDeliveryFinal} (position ${deliveryPos})`);
-    console.log(`[GA]   Correct order: ${pickupPos < deliveryPos && pickupPos >= 0 && deliveryPos >= 0}`);
-    console.log(`[GA]   Route: ${route.map(i => this.nodes[i]?.id).join(' → ')}`);
-    
-    // Emergency repairs if still missing critical points
-    if (!hasPickupFinal) {
-      console.error(`[GA] 🚨 EMERGENCY: Pickup still missing, inserting at position 1`);
-      route.splice(1, 0, this.pickupIndex);
-    }
-    
-    if (!hasDeliveryFinal) {
-      console.error(`[GA] 🚨 EMERGENCY: Delivery still missing, inserting before last node`);
-      route.splice(-1, 0, this.deliveryIndex);
-    }
-    
-    // Fix order if wrong
-    const finalPickupPos = route.indexOf(this.pickupIndex);
-    const finalDeliveryPos = route.indexOf(this.deliveryIndex);
-    if (finalPickupPos >= finalDeliveryPos || finalPickupPos < 0 || finalDeliveryPos < 0) {
-      console.error(`[GA] 🚨 EMERGENCY: Wrong order (P:${finalPickupPos}, D:${finalDeliveryPos}), rebuilding route`);
-      // Rebuild with minimal working route
-      route = [startHub, this.pickupIndex, this.deliveryIndex, endHub];
-      console.log(`[GA] 🔧 Emergency minimal route: ${route.map(i => this.nodes[i]?.id).join(' → ')}`);
-    }
-    
-    console.log(`[GA] ✅ FINAL ROUTE (${route.length} nodes): ${route.map(i => this.nodes[i]?.id).join(' → ')}`);
-    
-    return route;
-  }
-
-  /**
-   * Build a battery-aware path that includes charging stations when needed
-   */
-  buildBatteryAwarePath(fromIndex, toIndex, payload = 0) {
-    // First try direct path
-    const directPath = this.findValidPath(fromIndex, toIndex, 4);
-    if (directPath && this.isPathBatteryFeasible(directPath, payload)) {
-      console.log(`[GA] 🔋 Direct path is battery-feasible: ${directPath.map(i => this.nodes[i]?.id).join(' → ')}`);
-      return directPath;
-    }
-    
-    console.log(`[GA] 🔋 Direct path needs charging support, finding charging stations...`);
-    
-    // Find charging stations that can help
-    const viableCharging = this.findChargingStationsForPath(fromIndex, toIndex, payload);
-    
-    if (viableCharging.length > 0) {
-      // Try paths through charging stations
-      for (const chargingIndex of viableCharging) {
-        const pathToCharging = this.findValidPath(fromIndex, chargingIndex, 4);
-        const pathFromCharging = this.findValidPath(chargingIndex, toIndex, 4);
-        
-        if (pathToCharging && pathFromCharging && 
-            this.isPathBatteryFeasible(pathToCharging, payload) && 
-            this.isPathBatteryFeasible(pathFromCharging, payload)) {
-          
-          const fullPath = [...pathToCharging, ...pathFromCharging.slice(1)];
-          console.log(`[GA] 🔋 Found battery-feasible path via ${this.nodes[chargingIndex]?.id}: ${fullPath.map(i => this.nodes[i]?.id).join(' → ')}`);
-          return fullPath;
-        }
+        try {
+        console.log(`[GA] Creating next generation after generation ${gen + 1}...`);
+        const nextGenStart = performance.now();
+        this.population = this._nextGeneration();
+        const nextGenEnd = performance.now();
+        console.log(`[GA] Next generation created in ${(nextGenEnd - nextGenStart).toFixed(2)}ms`);
+      } catch (error) {
+        console.error(`[GA] Error creating next generation ${gen}:`, error);
+        throw error;
       }
       
-      // Try multiple charging stations if single ones don't work
-      const multiChargingPath = this.buildMultiChargingPath(fromIndex, toIndex, payload, viableCharging);
-      if (multiChargingPath) {
-        console.log(`[GA] 🔋 Found multi-charging path: ${multiChargingPath.map(i => this.nodes[i]?.id).join(' → ')}`);
-        return multiChargingPath;
-      }
-    }
-    
-    console.log(`[GA] ⚠️  No battery-feasible path found, returning direct path anyway`);
-    return directPath; // Return direct path as fallback
-  }
-
-  /**
-   * Check if a path is feasible with current battery capacity
-   */
-  isPathBatteryFeasible(path, payload = 0) {
-    if (!path || path.length < 2) return true;
-    
-    let currentBattery = this.batteryCapacity;
-    
-    for (let i = 0; i < path.length - 1; i++) {
-      const fromIndex = path[i];
-      const toIndex = path[i + 1];
+      const genEnd = performance.now();
+      const genTime = genEnd - genStart;
       
-      const batteryCost = this.calculateBatteryCost(fromIndex, toIndex, payload);
-      if (batteryCost === Infinity) return false;
-      
-      currentBattery -= batteryCost;
-      
-      // Check if we can recharge at charging stations
-      const currentNode = this.nodes[toIndex];
-      if (currentNode && currentNode.type === 'charging') {
-        currentBattery = Math.min(this.batteryCapacity, currentBattery + 30); // Recharge 30%
+      if (gen % 10 === 0 || genTime > 1000) {
+        console.log(`[GA] Generation ${gen + 1} completed in ${genTime.toFixed(2)}ms`);
       }
       
-      // If battery goes below 0 and we're not at a charging station, path is not feasible
-      if (currentBattery < 0 && (!currentNode || currentNode.type !== 'charging')) {
-        return false;
-      }
-    }
-    
-    return currentBattery >= 0;
-  }
-
-  /**
-   * Find charging stations that can help for a specific path
-   */
-  findChargingStationsForPath(fromIndex, toIndex, payload = 0) {
-    const maxDistance = this.batteryCapacity * GA_CONFIG.K_NORM / (1 + GA_CONFIG.ALPHA * payload);
-    const directDistance = this.getNodeDistance(fromIndex, toIndex);
-    
-    // If direct distance is within battery range, no charging needed
-    if (directDistance * 1.5 < maxDistance) { // 1.5 safety factor
-      return [];
-    }
-    
-    // Find charging stations that are:
-    // 1. Reachable from start
-    // 2. Can reach destination
-    // 3. Are positioned to help with the journey
-    const candidateStations = this.chargingIndices.filter(chargingIndex => {
-      const distanceToCharging = this.getNodeDistance(fromIndex, chargingIndex);
-      const distanceFromCharging = this.getNodeDistance(chargingIndex, toIndex);
-      
-      // Station should be roughly on the path and within battery range
-      return distanceToCharging < maxDistance * 0.8 && 
-             distanceFromCharging < maxDistance * 0.8 &&
-             (distanceToCharging + distanceFromCharging) < directDistance * 1.5;
-    });
-    
-    // Sort by total distance (closest to direct path)
-    candidateStations.sort((a, b) => {
-      const distA = this.getNodeDistance(fromIndex, a) + this.getNodeDistance(a, toIndex);
-      const distB = this.getNodeDistance(fromIndex, b) + this.getNodeDistance(b, toIndex);
-      return distA - distB;
-    });
-    
-    return candidateStations.slice(0, 5); // Return top 5 candidates
-  }
-
-  /**
-   * Build a path through multiple charging stations if needed
-   */
-  buildMultiChargingPath(fromIndex, toIndex, payload, chargingStations) {
-    // For very long distances, might need multiple charging stops
-    const maxDistance = this.batteryCapacity * GA_CONFIG.K_NORM / (1 + GA_CONFIG.ALPHA * payload) * 0.8;
-    const totalDistance = this.getNodeDistance(fromIndex, toIndex);
-    
-    if (totalDistance < maxDistance * 2) {
-      return null; // Single charging should be enough
-    }
-    
-    // Try to find a chain of charging stations
-    let currentPos = fromIndex;
-    const pathIndices = [fromIndex];
-    
-    while (this.getNodeDistance(currentPos, toIndex) > maxDistance) {
-      // Find the charging station that gets us closest to destination while staying in range
-      let bestCharging = null;
-      let bestProgress = 0;
-      
-      for (const chargingIndex of chargingStations) {
-        if (pathIndices.includes(chargingIndex)) continue; // Don't revisit
-        
-        const distanceToCharging = this.getNodeDistance(currentPos, chargingIndex);
-        const distanceFromCharging = this.getNodeDistance(chargingIndex, toIndex);
-        
-        if (distanceToCharging < maxDistance) {
-          const progress = this.getNodeDistance(fromIndex, toIndex) - distanceFromCharging;
-          if (progress > bestProgress) {
-            bestProgress = progress;
-            bestCharging = chargingIndex;
-          }
-        }
-      }
-      
-      if (bestCharging === null) {
-        break; // Can't find suitable charging station
-      }
-      
-      pathIndices.push(bestCharging);
-      currentPos = bestCharging;
-    }
-    
-    // Add final destination
-    pathIndices.push(toIndex);
-    
-    // Verify the complete path is valid
-    if (this.isPathBatteryFeasible(pathIndices, payload)) {
-      return pathIndices;
-    }
-    
-    return null;
-  }
-
-  /**
-   * Find a charging station that can serve as intermediate point between two nodes
-   */
-  findChargingStationBetween(fromIndex, toIndex) {
-    // Find charging stations that are reachable from 'from' and can reach 'to'
-    const viableStations = this.chargingIndices.filter(chargingIndex => {
-      const pathToCharging = this.findValidPath(fromIndex, chargingIndex, 3);
-      const pathFromCharging = this.findValidPath(chargingIndex, toIndex, 3);
-      return pathToCharging && pathFromCharging;
-    });
-    
-    if (viableStations.length > 0) {
-      // Return closest charging station
-      let bestStation = viableStations[0];
-      let bestDistance = this.getNodeDistance(fromIndex, bestStation) + this.getNodeDistance(bestStation, toIndex);
-      
-      viableStations.forEach(station => {
-        const totalDistance = this.getNodeDistance(fromIndex, station) + this.getNodeDistance(station, toIndex);
-        if (totalDistance < bestDistance) {
-          bestDistance = totalDistance;
-          bestStation = station;
-        }
-      });
-      
-      return bestStation;
-    }
-    
-    return null;
-  }
-
-  /**
-   * Enhanced pathfinding with better connectivity checking
-   */
-  findValidPath(startIndex, endIndex, maxLength = 5) {
-    if (startIndex === endIndex) return [startIndex];
-    
-    const queue = [[startIndex]];
-    const visited = new Set();
-    
-    while (queue.length > 0) {
-      const path = queue.shift();
-      const currentNode = path[path.length - 1];
-      
-      if (path.length > maxLength) continue;
-      
-      const pathKey = path.join('-');
-      if (visited.has(pathKey)) continue;
-      visited.add(pathKey);
-      
-      const neighbors = this.adjacencyList.get(currentNode) || [];
-      
-      for (const neighbor of neighbors) {
-        if (path.includes(neighbor)) continue; // Avoid cycles
-        
-        const newPath = [...path, neighbor];
-        
-        if (neighbor === endIndex) {
-          return newPath;
-        }
-        
-        if (newPath.length < maxLength) {
-          queue.push(newPath);
-        }
-      }
-    }
-    
-    return null; // No valid path found
-  }
-
-  /**
-   * Select the closest hub to a target node
-   */
-  selectClosestHub(targetIndex) {
-    let closestHub = this.hubIndices[0];
-    let minDistance = this.getNodeDistance(closestHub, targetIndex);
-    
-    for (const hubIndex of this.hubIndices) {
-      const distance = this.getNodeDistance(hubIndex, targetIndex);
-      if (distance < minDistance) {
-        minDistance = distance;
-        closestHub = hubIndex;
-      }
-    }
-    
-    return closestHub;
-  }
-
-  /**
-   * Select the best neighbor node to move towards target
-   */
-  selectBestNeighbor(currentNode, targetNode, neighbors) {
-    if (neighbors.includes(targetNode)) {
-      return targetNode; // Direct path to target
-    }
-    
-    // Choose neighbor that's closest to target
-    let bestNeighbor = null;
-    let bestDistance = Infinity;
-    
-    neighbors.forEach(neighbor => {
-      const distance = this.getNodeDistance(neighbor, targetNode);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestNeighbor = neighbor;
-      }
-    });
-    
-    return bestNeighbor;
-  }
-
-  /**
-   * Get euclidean distance between two nodes
-   */
-  getNodeDistance(nodeIndex1, nodeIndex2) {
-    const node1 = this.nodes[nodeIndex1];
-    const node2 = this.nodes[nodeIndex2];
-    if (!node1 || !node2) return Infinity;
-    
-    const latDiff = node1.lat - node2.lat;
-    const lngDiff = node1.lng - node2.lng;
-    return Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
-  }
-
-  /**
-   * Calculate battery cost between two nodes
-   */
-  calculateBatteryCost(fromIndex, toIndex, payload = 0) {
-    const key = `${fromIndex}-${toIndex}`;
-    const edge = this.edgeMap.get(key);
-    
-    if (!edge) {
-      return Infinity; // No direct connection
-    }
-    
-    const distance = edge.distance;
-    const batteryCost = (distance * (1 + GA_CONFIG.ALPHA * payload)) / GA_CONFIG.K_NORM;
-    
-    return batteryCost;
-  }
-
-  /**
-   * Initialize population with random routes
-   */
-  initializePopulation() {
-    const population = [];
-    
-    for (let i = 0; i < GA_CONFIG.POPULATION_SIZE; i++) {
-      const individual = this.generateRandomRoute();
-      population.push(individual);
-    }
-    
-    console.log(`[GA] Generated initial population of ${population.length} individuals`);
-    return population;
-  }
-
-  /**
-   * Evaluate fitness of an individual
-   * Lower fitness = better route
-   */
-  evaluateFitness(individual) {
-    const route = individual.route;
-    
-    // Check route validity FIRST
-    if (!this.isRouteValid(route)) {
-      individual.fitness = GA_CONFIG.INVALID_ROUTE_PENALTY;
-      individual.isValid = false;
-      return individual.fitness;
-    }
-    
-    let totalCost = 0;
-    let currentBattery = this.batteryCapacity;
-    const batteryHistory = [currentBattery];
-    let payload = 0;
-    let pickupDone = false;
-    let deliveryDone = false;
-    
-    // Check if pickup and delivery are in the route at all
-    const hasPickup = route.includes(this.pickupIndex);
-    const hasDelivery = route.includes(this.deliveryIndex);
-    
-    // MASSIVE penalty if pickup or delivery are missing from route
-    if (!hasPickup) {
-      individual.fitness = GA_CONFIG.MISSION_FAILURE_PENALTY;
-      individual.isValid = false;
-      return individual.fitness;
-    }
-    
-    if (!hasDelivery) {
-      individual.fitness = GA_CONFIG.MISSION_FAILURE_PENALTY;
-      individual.isValid = false;
-      return individual.fitness;
-    }
-    
-    // Simulate route execution
-    for (let i = 0; i < route.length - 1; i++) {
-      const fromIndex = route[i];
-      const toIndex = route[i + 1];
-      
-      // Update payload based on current position
-      if (fromIndex === this.pickupIndex && !pickupDone) {
-        payload = this.maxPayload;
-        pickupDone = true;
-      }
-      if (fromIndex === this.deliveryIndex && pickupDone && !deliveryDone) {
-        payload = 0;
-        deliveryDone = true;
-      }
-      
-      // Calculate battery cost for this segment
-      const batteryCost = this.calculateBatteryCost(fromIndex, toIndex, payload);
-      
-      if (batteryCost === Infinity) {
-        individual.fitness = GA_CONFIG.INVALID_ROUTE_PENALTY;
-        individual.isValid = false;
-        return individual.fitness;
-      }
-      
-      currentBattery -= batteryCost;
-      batteryHistory.push(currentBattery);
-      
-      // Check if we can recharge at charging stations
-      const currentNode = this.nodes[toIndex];
-      if (currentNode && currentNode.type === 'charging') {
-        currentBattery = Math.min(this.batteryCapacity, currentBattery + 30); // Recharge 30%
-        batteryHistory[batteryHistory.length - 1] = currentBattery;
-      }
-      
-      // Add battery cost to total
-      totalCost += batteryCost;
-      
-      // Battery penalty if low
-      if (currentBattery < 0) {
-        const penalty = GA_CONFIG.BATTERY_PENALTY * Math.abs(currentBattery);
-        totalCost += penalty;
-      }
-    }
-    
-    // CRITICAL: Mission completion penalties
-    if (!pickupDone) {
-      totalCost += GA_CONFIG.MISSION_FAILURE_PENALTY;
-    }
-    if (!deliveryDone) {
-      totalCost += GA_CONFIG.MISSION_FAILURE_PENALTY;
-    }
-    
-    // Additional penalty if pickup happens after delivery (wrong order)
-    const pickupPos = route.indexOf(this.pickupIndex);
-    const deliveryPos = route.indexOf(this.deliveryIndex);
-    if (pickupPos >= deliveryPos) {
-      const penalty = GA_CONFIG.MISSION_FAILURE_PENALTY / 2;
-      totalCost += penalty;
-    }
-    
-    // Length penalty (prefer shorter routes)
-    const lengthPenalty = route.length * 2;
-    totalCost += lengthPenalty;
-    
-    individual.fitness = totalCost;
-    individual.batteryHistory = batteryHistory;
-    individual.isValid = pickupDone && deliveryDone && currentBattery >= 0;
-    
-    return individual.fitness;
-  }
-
-  /**
-   * Check if route is valid (contains pickup and delivery in correct order AND follows graph edges)
-   */
-  isRouteValid(route) {
-    if (route.length < 4) {
-      console.log(`[GA] ❌ Route too short: ${route.length} nodes (minimum 4)`);
-      return false;
-    }
-    
-    // ENHANCED DEBUG: Show actual route with both indices and names
-    const routeDebugInfo = route.map(idx => {
-      const node = this.nodes[idx];
-      return `${idx}:"${node?.id || 'UNKNOWN'}"`;
-    }).join(' → ');
-    console.log(`[GA] 🔍 Validating route (idx:name): ${routeDebugInfo}`);
-    
-    const pickupPos = route.indexOf(this.pickupIndex);
-    const deliveryPos = route.indexOf(this.deliveryIndex);
-    
-    // Must contain both pickup and delivery, pickup before delivery
-    if (pickupPos < 0) {
-      console.log(`[GA] ❌ Route missing pickup point: ${this.pickupNodeId} (index ${this.pickupIndex})`);
-      console.log(`[GA]     Searching for index ${this.pickupIndex} in route: [${route.join(', ')}]`);
-      console.log(`[GA]     Route names: ${route.map(i => this.nodes[i]?.id).join(' → ')}`);
-      
-      // Check if pickup exists by name instead of index
-      const pickupByName = route.find(idx => this.nodes[idx]?.id === this.pickupNodeId);
-      if (pickupByName !== undefined) {
-        console.error(`[GA] 🚨 CRITICAL: Pickup "${this.pickupNodeId}" found at index ${pickupByName}, but expected at ${this.pickupIndex}!`);
-        console.error(`[GA] 🚨 This indicates index mapping corruption!`);
-      }
-      
-      return false;
-    }
-    
-    if (deliveryPos < 0) {
-      console.log(`[GA] ❌ Route missing delivery point: ${this.deliveryNodeId} (index ${this.deliveryIndex})`);
-      console.log(`[GA]     Searching for index ${this.deliveryIndex} in route: [${route.join(', ')}]`);
-      console.log(`[GA]     Route names: ${route.map(i => this.nodes[i]?.id).join(' → ')}`);
-      
-      // Check if delivery exists by name instead of index
-      const deliveryByName = route.find(idx => this.nodes[idx]?.id === this.deliveryNodeId);
-      if (deliveryByName !== undefined) {
-        console.error(`[GA] 🚨 CRITICAL: Delivery "${this.deliveryNodeId}" found at index ${deliveryByName}, but expected at ${this.deliveryIndex}!`);
-        console.error(`[GA] 🚨 This indicates index mapping corruption!`);
-      }
-      
-      return false;
-    }
-    
-    if (pickupPos >= deliveryPos) {
-      console.log(`[GA] ❌ Wrong order: pickup at ${pickupPos}, delivery at ${deliveryPos}`);
-      return false;
-    }
-    
-    // Check that all consecutive nodes are connected in the graph
-    for (let i = 0; i < route.length - 1; i++) {
-      const fromIndex = route[i];
-      const toIndex = route[i + 1];
-      
-      const neighbors = this.adjacencyList.get(fromIndex) || [];
-      if (!neighbors.includes(toIndex)) {
-        console.log(`[GA] ❌ Invalid edge: ${fromIndex} (${this.nodes[fromIndex]?.id}) -> ${toIndex} (${this.nodes[toIndex]?.id})`);
-        return false;
-      }
-    }
-    
-    console.log(`[GA] ✅ Route is valid: ${route.map(i => this.nodes[i]?.id).join(' → ')}`);
-    return true;
-  }
-
-  /**
-   * Tournament selection
-   */
-  tournamentSelection(population) {
-    const tournament = [];
-    
-    for (let i = 0; i < GA_CONFIG.TOURNAMENT_SIZE; i++) {
-      const randomIndex = Math.floor(Math.random() * population.length);
-      tournament.push(population[randomIndex]);
-    }
-    
-    // Return best individual from tournament (lowest fitness)
-    return tournament.reduce((best, individual) => 
-      individual.fitness < best.fitness ? individual : best
-    );
-  }
-
-  /**
-   * Improved crossover that maintains graph connectivity
-   */
-  crossover(parent1, parent2) {
-    if (Math.random() > GA_CONFIG.CROSSOVER_RATE) {
-      return [parent1.copy(), parent2.copy()];
-    }
-    
-    // Simple approach: take segments from each parent and repair if needed
-    const route1 = parent1.route;
-    const route2 = parent2.route;
-    
-    // Find pickup and delivery positions in both routes
-    const p1PickupPos = route1.indexOf(this.pickupIndex);
-    const p1DeliveryPos = route1.indexOf(this.deliveryIndex);
-    const p2PickupPos = route2.indexOf(this.pickupIndex);
-    const p2DeliveryPos = route2.indexOf(this.deliveryIndex);
-    
-    // Create children by taking different segments
-    const child1 = this.buildValidRoute(route1, route2, p1PickupPos, p1DeliveryPos);
-    const child2 = this.buildValidRoute(route2, route1, p2PickupPos, p2DeliveryPos);
-    
-    return [new Individual(child1), new Individual(child2)];
-  }
-
-  /**
-   * Build a valid route by combining segments from two parents
-   */
-  buildValidRoute(primaryRoute, secondaryRoute, pickupPos, deliveryPos) {
-    // Choose hubs closer to pickup/delivery
-    const startHub = this.selectClosestHub(this.pickupIndex);
-    const endHub = this.selectClosestHub(this.deliveryIndex);
-    
-    // ALWAYS use the complete valid route builder to ensure pickup/delivery inclusion
-    return this.buildCompleteValidRoute(startHub, endHub);
-  }
-
-  /**
-   * Enhanced mutation that ensures valid connectivity AND preserves pickup/delivery
-   */
-  mutate(individual) {
-    if (Math.random() > GA_CONFIG.MUTATION_RATE) {
-      return individual;
-    }
-    
-    const route = [...individual.route];
-    const mutationType = Math.random();
-    
-    // CRITICAL: Find pickup and delivery positions to protect them
-    const pickupPos = route.indexOf(this.pickupIndex);
-    const deliveryPos = route.indexOf(this.deliveryIndex);
-    
-    if (pickupPos < 0 || deliveryPos < 0) {
-      console.warn(`[GA] 🚨 Mutation: Critical points missing in route before mutation!`);
-      // Rebuild the route completely to ensure pickup/delivery are present
-      return new Individual(this.buildCompleteValidRoute(route[0], route[route.length - 1]));
-    }
-    
-    if (mutationType < 0.4) {
-      // Insert charging station detour (but not between pickup and delivery)
-      this.insertValidChargingDetour(route, pickupPos, deliveryPos);
-    } else if (mutationType < 0.7) {
-      // Remove unnecessary intermediate nodes (but NEVER pickup/delivery)
-      this.removeValidIntermediate(route, pickupPos, deliveryPos);
-    } else {
-      // Rebuild a segment with better path (but preserve pickup/delivery)
-      this.rebuildSegment(route, pickupPos, deliveryPos);
-    }
-    
-    // CRITICAL: Verify pickup and delivery are still present after mutation
-    const newPickupPos = route.indexOf(this.pickupIndex);
-    const newDeliveryPos = route.indexOf(this.deliveryIndex);
-    
-    if (newPickupPos < 0 || newDeliveryPos < 0 || newPickupPos >= newDeliveryPos) {
-      console.warn(`[GA] 🚨 Mutation damaged route! Rebuilding...`);
-      // Emergency rebuild with forced pickup/delivery inclusion
-      return new Individual(this.buildCompleteValidRoute(route[0], route[route.length - 1]));
-    }
-    
-    return new Individual(route);
-  }
-
-  /**
-   * Insert a valid charging station detour (protected version)
-   */
-  insertValidChargingDetour(route, pickupPos, deliveryPos) {
-    if (route.length >= GA_CONFIG.MAX_ROUTE_LENGTH) return;
-    
-    // Only allow insertions that don't affect pickup→delivery path
-    for (let i = 0; i < route.length - 1; i++) {
-      // SKIP any positions that could affect pickup→delivery sequence
-      if (i >= pickupPos && i <= deliveryPos) continue;
-      
-      const fromNode = route[i];
-      const toNode = route[i + 1];
-      
-      // Find charging stations that can create valid detour
-      const validDetours = this.chargingIndices.filter(chargingNode => {
-        if (route.includes(chargingNode)) return false;
-        
-        const pathToCharging = this.findValidPath(fromNode, chargingNode, 3);
-        const pathFromCharging = this.findValidPath(chargingNode, toNode, 3);
-        
-        return pathToCharging && pathFromCharging;
-      });
-      
-      if (validDetours.length > 0) {
-        const selectedCharging = validDetours[Math.floor(Math.random() * validDetours.length)];
-        
-        // Build the detour path
-        const pathToCharging = this.findValidPath(fromNode, selectedCharging, 3);
-        const pathFromCharging = this.findValidPath(selectedCharging, toNode, 3);
-        
-        if (pathToCharging && pathFromCharging && pathToCharging.length > 1 && pathFromCharging.length > 1) {
-          // Remove direct connection and insert detour
-          const detourPath = [...pathToCharging.slice(1), ...pathFromCharging.slice(1, -1)];
-          route.splice(i + 1, 0, ...detourPath);
-          return; // Only do one detour per mutation
-        }
-      }
-    }
-  }
-
-  /**
-   * Remove intermediate nodes while preserving pickup/delivery (protected version)
-   */
-  removeValidIntermediate(route, pickupPos, deliveryPos) {
-    if (route.length <= 4) return;
-    
-    // Find removable segments (NEVER remove pickup or delivery)
-    for (let i = 1; i < route.length - 1; i++) {
-      if (i === pickupPos || i === deliveryPos) continue; // PROTECT critical points
-      
-      const prevNode = route[i - 1];
-      const nextNode = route[i + 1];
-      
-      // Check if we can create direct valid path
-      const directPath = this.findValidPath(prevNode, nextNode, 3);
-      if (directPath && directPath.length === 2) {
-        route.splice(i, 1);
-        return; // Only remove one node per mutation
-      }
-    }
-  }
-
-  /**
-   * Rebuild a segment of the route with better path (protected version)
-   */
-  rebuildSegment(route, pickupPos, deliveryPos) {
-    if (route.length < 4) return;
-    
-    // Choose random segment to rebuild, but NEVER include pickup/delivery positions
-    const availableSegments = [];
-    for (let start = 1; start < route.length - 2; start++) {
-      for (let end = start + 1; end < route.length - 1; end++) {
-        // Skip segments that contain pickup or delivery
-        if ((start <= pickupPos && pickupPos <= end) || 
-            (start <= deliveryPos && deliveryPos <= end)) {
-          continue;
-        }
-        availableSegments.push({ start, end });
-      }
-    }
-    
-    if (availableSegments.length === 0) return; // No safe segments to rebuild
-    
-    const { start: segmentStart, end: segmentEnd } = availableSegments[Math.floor(Math.random() * availableSegments.length)];
-    
-    const fromNode = route[segmentStart - 1];
-    const toNode = route[segmentEnd + 1];
-    
-    // Try to find better path
-    const newPath = this.findValidPath(fromNode, toNode, 5);
-    if (newPath && newPath.length > 2) {
-      // Replace segment with new path
-      const replacement = newPath.slice(1, -1); // Remove start and end nodes
-      route.splice(segmentStart, segmentEnd - segmentStart + 1, ...replacement);
-    }
-  }
-
-  /**
-   * Run the genetic algorithm
-   */
-  run() {
-    console.log(`[GA] 🚁 Starting Genetic Algorithm`);
-    console.log(`[GA] 📊 Configuration: Population=${GA_CONFIG.POPULATION_SIZE}, Generations=${GA_CONFIG.GENERATIONS}`);
-    console.log(`[GA] 🎯 Mission: ${this.pickupNodeId} → ${this.deliveryNodeId}`);
-    console.log(`[GA] 🔋 Battery: ${this.batteryCapacity}%, Payload: ${this.maxPayload}kg`);
-    console.log(`[GA] ===============================================`);
-    
-    // Initialize population
-    let population = this.initializePopulation();
-    
-    // Evaluate initial population
-    population.forEach(individual => this.evaluateFitness(individual));
-    
-    let bestFitness = Infinity;
-    let bestIndividual = null;
-    let generationsSinceImprovement = 0;
-    
-    // Track fitness evolution
-    const fitnessHistory = [];
-    const validRouteHistory = [];
-    
-    // Main evolution loop
-    for (let generation = 0; generation < GA_CONFIG.GENERATIONS; generation++) {
-      // Sort population by fitness
-      population.sort((a, b) => a.fitness - b.fitness);
-      
-      // Calculate generation statistics
-      const genBest = population[0].fitness;
-      const genWorst = population[population.length - 1].fitness;
-      const genAvg = population.reduce((sum, ind) => sum + ind.fitness, 0) / population.length;
-      const validCount = population.filter(ind => ind.isValid).length;
-      
-      fitnessHistory.push({ generation, best: genBest, avg: genAvg, worst: genWorst });
-      validRouteHistory.push({ generation, validCount, totalCount: population.length });
-      
-      // Track best individual
-      if (population[0].fitness < bestFitness) {
-        bestFitness = population[0].fitness;
-        bestIndividual = population[0].copy();
-        generationsSinceImprovement = 0;
-        
-        console.log(`[GA] 🎉 Gen ${generation}: NEW BEST FITNESS = ${bestFitness.toFixed(2)}`);
-        console.log(`[GA]     Route: ${bestIndividual.route.map(i => this.nodes[i]?.id).join(' → ')}`);
-        console.log(`[GA]     Valid: ${bestIndividual.isValid ? '✅' : '❌'}, Steps: ${bestIndividual.route.length}`);
-        
-        if (bestIndividual.isValid) {
-          const finalBattery = bestIndividual.batteryHistory[bestIndividual.batteryHistory.length - 1] || 0;
-          console.log(`[GA]     Battery remaining: ${finalBattery.toFixed(1)}%`);
-        }
-      } else {
-        generationsSinceImprovement++;
-      }
-      
-      // Generation progress log every 5 generations
-      if (generation % 5 === 0 || generation === GA_CONFIG.GENERATIONS - 1) {
-        console.log(`[GA] 📈 Gen ${generation}/${GA_CONFIG.GENERATIONS}: Best=${genBest.toFixed(2)}, Avg=${genAvg.toFixed(2)}, Valid=${validCount}/${population.length}`);
-      }
-      
-      // Early stopping if no improvement
-      if (generationsSinceImprovement > 20) {
-        console.log(`[GA] ⏹️  Early stopping at generation ${generation} (no improvement for 20 gens)`);
+      // Safety timeout - abort if taking too long
+      if (genTime > 5000) {
+        console.warn(`[GA] Generation ${gen + 1} took ${genTime.toFixed(2)}ms - aborting for performance`);
         break;
       }
       
-      // Create new population
-      const newPopulation = [];
+      if (gen % 50 === 0) {
+        console.log(`[GA] Progress: ${gen}/${this.generations} generations completed`);
+      }
+    }    console.log('[GA] Evolution complete, performing final evaluation...');
+    let best;
+    try {
+      // Final evaluation & best route
+      this._evaluatePopulation();
+      best = this._getBestIndividual();
+      console.log('[GA] Best individual found:', best);
       
-      // Elitism: keep best individuals
-      for (let i = 0; i < GA_CONFIG.ELITE_SIZE; i++) {
-        newPopulation.push(population[i].copy());
+      const algorithmEnd = performance.now();
+      console.log(`[GA] Total algorithm time: ${(algorithmEnd - algorithmStart).toFixed(2)}ms`);
+    } catch (error) {
+      console.error('[GA] Error in final evaluation:', error);
+      throw error;
+    }
+      // Format the result for the application
+    const success = best.fitness > 0.1; // Consider successful if fitness is reasonable
+    const route_indices = best.route;const route_names = route_indices.map(idx => {
+      const node = this.nodes[idx];
+      return node ? node.id : `Node(${idx})`;
+    });
+    
+    // Calculate battery history
+    const battery_history = this._calculateBatteryHistory(best.route);
+    
+    // Calculate additional statistics
+    const totalDistance = best.details.distTotal || 0;
+    const energyUsed = best.details.energyUsed || 0;
+    const batteryUsedPercent = (energyUsed / this.batteryCapacity) * 100;
+    const finalBatteryPercent = battery_history.length > 0 ? 
+      (battery_history[battery_history.length - 1] / this.batteryCapacity) * 100 : 0;
+    
+    return {
+      success,
+      route_indices,
+      route_names,
+      battery_history,
+      fitness: best.fitness,
+      details: best.details,
+      stats: {
+        steps: route_indices.length,
+        total_distance: totalDistance,
+        energy_used: energyUsed,
+        battery_used: batteryUsedPercent,
+        battery_final: finalBatteryPercent,
+        flight_time: best.details.flightTime || 0,
+        charge_time: best.details.chargeTime || 0
+      }
+    };
+  }
+
+  /* =====================================================
+     GA INTERNALS
+     ===================================================== */
+  _initialPopulation() {
+    const pop = [];
+    for (let i = 0; i < this.popSize; i++) {
+      pop.push({ route: this._randomRoute() });
+    }
+    return pop;
+  }
+  _evaluatePopulation() {
+    console.log('[GA] Evaluating population of', this.population.length, 'individuals...');
+    const startTime = performance.now();
+    
+    for (const indiv of this.population) {
+      if (indiv.fitness === undefined) {
+        const fitnessStart = performance.now();
+        const { score, details } = this._fitness(indiv.route);
+        indiv.fitness = score;
+        indiv.details = details;
+        const fitnessEnd = performance.now();
+        
+        // Log slow fitness evaluations
+        if (fitnessEnd - fitnessStart > 10) {
+          console.log(`[GA] Slow fitness evaluation: ${(fitnessEnd - fitnessStart).toFixed(2)}ms for route length ${indiv.route.length}`);
+        }
+      }
+    }
+    
+    const endTime = performance.now();
+    console.log(`[GA] Population evaluation completed in ${(endTime - startTime).toFixed(2)}ms`);
+  }
+  _nextGeneration() {
+    console.log('[GA] _nextGeneration: Starting...');
+    
+    // Sort population by fitness DESC (because we maximise fitness)
+    console.log('[GA] _nextGeneration: Sorting population...');
+    this.population.sort((a, b) => b.fitness - a.fitness);
+
+    const newPop = [];
+    
+    // Elitism – copy best N individuals
+    console.log('[GA] _nextGeneration: Adding elite individuals...');
+    for (let i = 0; i < this.elitismCount; i++) {
+      newPop.push({ ...this.population[i] });
+    }
+    console.log(`[GA] _nextGeneration: Added ${this.elitismCount} elite individuals`);
+
+    // Fill the rest of population
+    console.log('[GA] _nextGeneration: Filling rest of population...');
+    let iterationCount = 0;
+    const maxIterations = this.popSize * 10; // Safety limit
+    
+    while (newPop.length < this.popSize) {
+      iterationCount++;
+      if (iterationCount > maxIterations) {
+        console.error('[GA] _nextGeneration: Too many iterations, breaking to prevent infinite loop');
+        break;
       }
       
-      // Generate offspring
-      while (newPopulation.length < GA_CONFIG.POPULATION_SIZE) {
-        const parent1 = this.tournamentSelection(population);
-        const parent2 = this.tournamentSelection(population);
+      if (iterationCount % 10 === 0) {
+        console.log(`[GA] _nextGeneration: Iteration ${iterationCount}, population size: ${newPop.length}/${this.popSize}`);
+      }
+      
+      console.log(`[GA] _nextGeneration: Selecting parents (iteration ${iterationCount})...`);
+      const parent1 = this._tournamentSelect();
+      const parent2 = this._tournamentSelect();
+
+      let [child1Route, child2Route] = [parent1.route.slice(), parent2.route.slice()];
+
+      console.log(`[GA] _nextGeneration: Applying crossover/mutation (iteration ${iterationCount})...`);
+      if (RNG() < this.crossoverRate) {
+        console.log(`[GA] _nextGeneration: Performing crossover...`);
+        [child1Route, child2Route] = this._crossover(parent1.route, parent2.route);
+        console.log(`[GA] _nextGeneration: Crossover completed`);
+      }
+      if (RNG() < this.mutationRate) {
+        console.log(`[GA] _nextGeneration: Mutating child1...`);
+        child1Route = this._mutate(child1Route);
+        console.log(`[GA] _nextGeneration: Child1 mutation completed`);
+      }
+      if (RNG() < this.mutationRate) {
+        console.log(`[GA] _nextGeneration: Mutating child2...`);
+        child2Route = this._mutate(child2Route);
+        console.log(`[GA] _nextGeneration: Child2 mutation completed`);
+      }
+
+      console.log(`[GA] _nextGeneration: Adding children to population...`);
+      newPop.push({ route: child1Route });
+      if (newPop.length < this.popSize) {
+        newPop.push({ route: child2Route });
+      }
+      console.log(`[GA] _nextGeneration: Children added, population size now: ${newPop.length}`);
+    }
+    
+    console.log(`[GA] _nextGeneration: Completed after ${iterationCount} iterations`);
+    return newPop;
+  }
+
+  _tournamentSelect() {
+    let best = null;
+    for (let i = 0; i < this.tournamentSize; i++) {
+      const contender = this.population[randInt(this.population.length)];
+      if (!best || contender.fitness > best.fitness) best = contender;
+    }
+    return best;
+  }  /** Order‑preserving crossover (OX operator) */
+  _crossover(parent1, parent2) {
+    console.log('[GA] _crossover: Starting crossover operation...');
+    
+    const size = parent1.length;
+    const idx1 = randInt(size);
+    const idx2 = randInt(size);
+    const [start, end] = [Math.min(idx1, idx2), Math.max(idx1, idx2)];
+    
+    console.log(`[GA] _crossover: Crossover points: [${start}, ${end}] for size ${size}`);
+
+    const child1 = Array(size).fill(null);
+    const child2 = Array(size).fill(null);
+
+    // Copy slice from parent into child
+    for (let i = start; i <= end; i++) {
+      child1[i] = parent1[i];
+      child2[i] = parent2[i];
+    }
+    console.log('[GA] _crossover: Copied slices to children');
+
+    // Fill remaining positions preserving order & validity
+    const fillChild = (child, donor, childName) => {
+      console.log(`[GA] _crossover: Filling ${childName}...`);
+      
+      // Create a set of already used nodes for fast lookup
+      const usedNodes = new Set(child.filter(n => n !== null));
+      console.log(`[GA] _crossover: ${childName} already has ${usedNodes.size} nodes`);
+      
+      // Create a list of available nodes from donor in order
+      const availableNodes = donor.filter(node => !usedNodes.has(node));
+      console.log(`[GA] _crossover: ${childName} has ${availableNodes.length} available nodes from donor`);
+      
+      let availableIdx = 0;
+      
+      for (let i = 0; i < size; i++) {
+        if (child[i] !== null) continue;
         
-        const [child1, child2] = this.crossover(parent1, parent2);
-        
-        const mutatedChild1 = this.mutate(child1);
-        const mutatedChild2 = this.mutate(child2);
-        
-        this.evaluateFitness(mutatedChild1);
-        this.evaluateFitness(mutatedChild2);
-        
-        newPopulation.push(mutatedChild1);
-        if (newPopulation.length < GA_CONFIG.POPULATION_SIZE) {
-          newPopulation.push(mutatedChild2);
+        if (availableIdx < availableNodes.length) {
+          child[i] = availableNodes[availableIdx];
+          availableIdx++;
+        } else {
+          // Fallback: use any remaining node from the original parent
+          console.warn(`[GA] _crossover: ${childName} ran out of available nodes at position ${i}`);
+          const allNodes = [...new Set([...parent1, ...parent2])];
+          const currentUsed = new Set(child.filter(n => n !== null));
+          const unusedNode = allNodes.find(n => !currentUsed.has(n));
+          child[i] = unusedNode || donor[i % donor.length]; // Ultimate fallback
         }
       }
       
-      population = newPopulation;
-    }
-    
-    // Final result
-    population.sort((a, b) => a.fitness - b.fitness);
-    const finalBest = population[0];
-    
-    console.log(`[GA] ===============================================`);
-    console.log(`[GA] 🏁 ALGORITHM COMPLETED`);
-    console.log(`[GA] 🏆 Best fitness: ${finalBest.fitness.toFixed(2)}`);
-    console.log(`[GA] 📏 Route length: ${finalBest.route.length} steps`);
-    console.log(`[GA] ✅ Valid: ${finalBest.isValid}`);
-    console.log(`[GA] 🛤️  Route: ${finalBest.route.map(index => this.nodes[index]?.id || `Unknown-${index}`).join(' → ')}`);
-    
-    if (finalBest.isValid) {
-      const finalBattery = finalBest.batteryHistory[finalBest.batteryHistory.length - 1] || 0;
-      const batteryUsed = this.batteryCapacity - finalBattery;
-      console.log(`[GA] 🔋 Battery used: ${batteryUsed.toFixed(1)}%, Remaining: ${finalBattery.toFixed(1)}%`);
-    }
-    
-    // Display fitness evolution summary
-    console.log(`[GA] 📊 FITNESS EVOLUTION:`);
-    const step = Math.max(1, Math.floor(fitnessHistory.length / 10));
-    for (let i = 0; i < fitnessHistory.length; i += step) {
-      const data = fitnessHistory[i];
-      console.log(`[GA]     Gen ${data.generation.toString().padStart(3)}: ${data.best.toFixed(2).padStart(10)} (avg: ${data.avg.toFixed(2)})`);
-    }
-    
-    // Display valid routes evolution
-    console.log(`[GA] 🎯 VALID ROUTES EVOLUTION:`);
-    for (let i = 0; i < validRouteHistory.length; i += step) {
-      const data = validRouteHistory[i];
-      const percentage = ((data.validCount / data.totalCount) * 100).toFixed(1);
-      console.log(`[GA]     Gen ${data.generation.toString().padStart(3)}: ${data.validCount}/${data.totalCount} (${percentage}%)`);
-    }
-    
-    console.log(`[GA] ===============================================`);
-    
-    return {
-      success: finalBest.isValid && finalBest.fitness < GA_CONFIG.INVALID_ROUTE_PENALTY,
-      route_indices: finalBest.route,
-      route_names: finalBest.route.map(index => this.nodes[index]?.id || `Unknown-${index}`),
-      battery_history: finalBest.batteryHistory,
-      fitness: finalBest.fitness,
-      generations: Math.min(GA_CONFIG.GENERATIONS, generationsSinceImprovement + 1),
-      stats: {
-        success: finalBest.isValid,
-        steps: finalBest.route.length,
-        battery_used: this.batteryCapacity - (finalBest.batteryHistory[finalBest.batteryHistory.length - 1] || 0),
-        battery_final: finalBest.batteryHistory[finalBest.batteryHistory.length - 1] || 0,
-        total_cost: finalBest.fitness
-      },
-      // Add evolution data for analysis
-      fitness_evolution: fitnessHistory,
-      valid_routes_evolution: validRouteHistory
+      console.log(`[GA] _crossover: ${childName} filled, calling repair...`);
+      return this._repairRoute(child);
     };
+
+    const result = [fillChild(child1, parent2, 'child1'), fillChild(child2, parent1, 'child2')];
+    console.log('[GA] _crossover: Crossover completed');
+    return result;
+  }
+  /** Simple mutation: swap two non‑hub nodes & repair */
+  _mutate(route) {
+    console.log('[GA] _mutate: Starting mutation...');
+    
+    const len = route.length;
+    if (len <= 2) {
+      console.log('[GA] _mutate: Route too short for mutation, returning as-is');
+      return route;
+    }
+    
+    let i = randInt(len - 2) + 1;      // avoid first (hub)
+    let j = randInt(len - 2) + 1;
+    if (i === j) j = (j + 1) % (len - 1) + 1;
+    
+    console.log(`[GA] _mutate: Swapping positions ${i} and ${j} (values: ${route[i]}, ${route[j]})`);
+    [route[i], route[j]] = [route[j], route[i]];
+    
+    console.log('[GA] _mutate: Calling repair after mutation...');
+    const result = this._repairRoute(route);
+    console.log('[GA] _mutate: Mutation completed');
+    return result;
+  }
+
+  /* =====================================================
+     ROUTE MANIPULATION & VALIDATION
+     ===================================================== */
+
+  /** Generate a random valid route obeying pickup‑delivery precedence */
+  _randomRoute() {
+    // 1. Start with the list of pickups & deliveries interleaved randomly
+    const core = [];
+    for (const p of this.packages) {
+      core.push(p.pickup, p.delivery);
+    }
+    shuffle(core);
+
+    // 2. Repair precedence constraint (move delivery after its pickup)
+    for (const { pickup, delivery } of this.packages) {
+      const pIdx = core.indexOf(pickup);
+      const dIdx = core.indexOf(delivery);
+      if (dIdx < pIdx) {
+        core.splice(dIdx, 1);      // remove delivery
+        core.splice(pIdx + 1, 0, delivery); // re‑insert just after pickup
+      }
+    }
+
+    // 3. Optionally insert charging nodes (random chance)
+    const route = [this.startHub, ...core, this.endHub];
+    return route;
+  }
+
+  /** Ensure uniqueness of nodes, pickup -> delivery precedence, keep hubs fixed */
+  _repairRoute(route) {
+    // Remove duplicates except hubs
+    const seen = new Set([this.startHub, this.endHub]);
+    const cleaned = [this.startHub];
+
+    for (let i = 1; i < route.length - 1; i++) {
+      const node = route[i];
+      if (!seen.has(node)) {
+        cleaned.push(node);
+        seen.add(node);
+      }
+    }
+    cleaned.push(this.endHub);
+
+    // Ensure every pickup comes before its delivery
+    for (const { pickup, delivery } of this.packages) {
+      const pIdx = cleaned.indexOf(pickup);
+      const dIdx = cleaned.indexOf(delivery);
+      if (pIdx === -1 && dIdx === -1) {
+        // Neither present (should not happen) – insert both
+        cleaned.splice(cleaned.length - 1, 0, pickup, delivery);
+      } else if (pIdx === -1) {
+        // Only delivery present – insert pickup before it
+        cleaned.splice(dIdx, 0, pickup);
+      } else if (dIdx === -1) {
+        // Only pickup present – insert delivery after
+        cleaned.splice(pIdx + 1, 0, delivery);
+      } else if (dIdx < pIdx) {
+        // Wrong order – move delivery after pickup
+        cleaned.splice(dIdx, 1);
+        cleaned.splice(pIdx + 1, 0, delivery);
+      }
+    }
+    return cleaned;
+  }
+
+  /* =====================================================
+     FITNESS CALCULATION
+     ===================================================== */
+  _fitness(route) {
+    let payload = 0;                    // kg carried before leaving node
+    let battery = this.batteryCapacity; // energy units remaining
+    let energyUsed = 0;
+    let distTotal = 0;
+    let chargeTime = 0;
+    let penalty = 0;
+
+    // Helper – compute energy for one leg
+    const energyLeg = (d, load) => d / this.kNorm * (1 + this.alpha * load);
+
+    for (let i = 0; i < route.length - 1; i++) {
+      const u = route[i];
+      const v = route[i + 1];
+      const d = this.dist(u, v);
+
+      const e = energyLeg(d, payload);
+      battery -= e;
+      energyUsed += e;
+      distTotal += d;
+
+      if (battery < 0) {
+        penalty += 10000 * Math.abs(battery);
+        battery = 0;
+      }
+
+      // Arrive at node v – update payload
+      if (this.weightByPickup.has(v)) {
+        payload += this.weightByPickup.get(v);
+      }
+      if (this.weightByDelivery.has(v)) {
+        payload -= this.weightByDelivery.get(v);
+        if (payload < 0) {
+          penalty += 1000 * Math.abs(payload);
+          payload = 0;
+        }
+      }
+
+      // Handle charging point
+      if (this.chargingNodes.has(v)) {
+        battery = this.batteryCapacity; // full charge
+        chargeTime += this.chargeDuration;
+      }
+    }
+
+    const flightTime = distTotal / this.cruiseSpeed;
+    const cost =
+      this.weights.energy * energyUsed +
+      this.weights.distance * distTotal +
+      this.weights.time * (flightTime + chargeTime) +
+      penalty;
+
+    const score = 1 / (1 + cost); // maximise
+    return { score, details: { energyUsed, distTotal, flightTime, chargeTime, penalty } };
+  }
+  _getBestIndividual() {
+    return this.population.reduce((best, indiv) => (indiv.fitness > best.fitness ? indiv : best));
+  }
+  _calculateBatteryHistory(route) {
+    const history = [];
+    let battery = this.batteryCapacity;
+    let payload = 0;
+    history.push(battery);
+
+    for (let i = 0; i < route.length - 1; i++) {
+      const u = route[i];
+      const v = route[i + 1];
+      const d = this.dist(u, v);
+      
+      // Use same energy calculation as fitness function
+      const energyUsed = d / this.kNorm * (1 + this.alpha * payload);
+      battery -= energyUsed;
+      
+      // Update payload at destination node
+      if (this.weightByPickup.has(v)) {
+        payload += this.weightByPickup.get(v);
+      }
+      if (this.weightByDelivery.has(v)) {
+        payload -= this.weightByDelivery.get(v);
+        payload = Math.max(0, payload); // Prevent negative payload
+      }
+      
+      // Handle charging points
+      if (this.chargingNodes.has(v)) {
+        battery = this.batteryCapacity;
+      }
+      
+      history.push(Math.max(0, battery));
+    }
+    
+    return history;
   }
 }
