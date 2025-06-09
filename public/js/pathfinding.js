@@ -1,14 +1,7 @@
-/**
- * Pathfinding utilities for the drone delivery optimizer
- */
-
-/** Return distance between two node indices using ONLY the edge list, no fallback */
 export function buildDistanceLookup(nodes, edges) {
   const map = new Map();
   
-  // Build bidirectional edge map - handle both frontend and backend formats
   for (const e of edges) {
-    // Handle both formats: {u, v, dist} and {source, target, distance}
     const u = e.u !== undefined ? e.u : e.source;
     const v = e.v !== undefined ? e.v : e.target;
     const distance = e.dist ?? e.distance ?? e.cost;
@@ -24,7 +17,6 @@ export function buildDistanceLookup(nodes, edges) {
     map.set(key2, distance);
   }
   
-  // Build adjacency list for pathfinding
   const adjacency = new Map();
   for (let i = 0; i < nodes.length; i++) {
     adjacency.set(i, []);
@@ -61,7 +53,6 @@ export function buildDistanceLookup(nodes, edges) {
   };
 }
 
-/** Dijkstra's algorithm to find shortest path distance between two nodes */
 export function dijkstraDistance(start, end, adjacency) {
   if (start === end) return 0;
   
@@ -97,7 +88,6 @@ export function dijkstraDistance(start, end, adjacency) {
   return Infinity;
 }
 
-/** Find shortest path between two nodes using Dijkstra and return the full path */
 export function findGraphPath(start, end, adjacencyList) {
   if (start === end) return [start];
   
@@ -138,5 +128,5 @@ export function findGraphPath(start, end, adjacencyList) {
     }
   }
   
-  return [start, end]; // Fallback to direct connection
+  return [start, end];
 }

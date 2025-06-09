@@ -1,11 +1,10 @@
-// Main application file - simplified and modular
 import { pickCityPoints } from '/js/city-picker.js';
 import { haversineDistance, RNG, insideFrance, setFrancePolygon } from './utils.js';
 import { buildGraph, annotateEdges, drawGraph, highlightNodeConnections } from './graph-builder.js';
 import { visualizeRoute, clearRouteVisualization } from './route-visualization.js';
+import { setupAlgorithmToggle, setupBatterySlider, setupPackageSelection, setupWindCompass, setupVisibilityToggles } from './ui-handlers.js';
 import GeneticAlgorithm from './GA.js';
 
-// Map and layers setup
 const map = L.map('map').setView([46.6, 2.3], 6);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -27,7 +26,6 @@ const COLORS = {
   pickup: '#f39c12'
 };
 
-// Global state
 let allNodes = [];
 let allEdges = [];
 let windAngle = RNG() * 2 * Math.PI;
@@ -41,7 +39,6 @@ let deliveryNodeId = null;
 window.batteryCapacity = 100;
 window.maxPayload = 3;
 
-// Initialize map with France boundaries
 fetch('/data/metropole-version-simplifiee.geojson')
   .then(response => response.json())
   .then(geojson => {
@@ -59,7 +56,6 @@ fetch('/data/metropole-version-simplifiee.geojson')
   })
   .catch(err => {
     console.error('Error loading France boundaries:', err);
-    // Fallback mode
     francePoly = {
       type: "Feature",
       geometry: {
@@ -78,15 +74,12 @@ fetch('/data/metropole-version-simplifiee.geojson')
 async function generateNetwork() {
   if (!francePoly) return;
   
-  // Clear existing layers
   [hubsLayer, chargingLayer, deliveryLayer, pickupLayer, edgesLayer].forEach(layer => layer.clearLayers());
   
-  // Get points from city picker
   const { hubs: hubPoints, charging: chargingPoints, delivery: deliveryPoints, pickup: pickupPoints } = await pickCityPoints();
   
   allNodes = [];
   
-  // Create nodes for each type
   const nodeTypes = [
     { points: hubPoints, type: 'hubs', layer: hubsLayer, color: COLORS.hubs, radius: 8, prefix: 'Hub' },
     { points: chargingPoints, type: 'charging', layer: chargingLayer, color: COLORS.charging, radius: 6, prefix: 'Charging' },
@@ -126,12 +119,10 @@ async function generateNetwork() {
     });
   });
   
-  // Build and draw graph
   if (allNodes.length > 0) {
     const rawEdges = buildGraph(allNodes, 10);
     allEdges = annotateEdges(rawEdges, allNodes, windAngle);
     
-    // Export graph data
     const graphData = {
       nodes: allNodes.map((node, index) => ({
         id: node.id,
@@ -159,7 +150,6 @@ async function generateNetwork() {
     
     drawGraph(allNodes, allEdges, edgesLayer);
     
-    // Update wind arrow
     const windArrow = document.getElementById('wind-arrow');
     if (windArrow) {
       const degrees = Math.round((windAngle * 180 / Math.PI) % 360);
@@ -276,7 +266,27 @@ function updateDeliveryDisplay(text) {
   if (badge) badge.textContent = text;
 }
 
-// Algorithm execution
+function setWindAngleFromDegrees(degrees) {
+  windAngle = (degrees * Math.PI / 180);
+  const windArrow = document.getElementById('wind-arrow');
+  const windAngleValue = document.getElementById('wind-angle-value');
+  
+  if (windArrow) {
+    windArrow.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
+  }
+  if (windAngleValue) {
+    windAngleValue.textContent = `${Math.round(degrees)}°`;
+  }
+  if (allNodes.length > 0 && allEdges.length > 0) {
+    allEdges = annotateEdges(
+      allEdges.map(e => ({ source: e.source, target: e.target, distance: e.distance })),
+      allNodes,
+      windAngle
+    );
+    drawGraph(allNodes, allEdges, edgesLayer);
+  }
+}
+
 function runAlgorithm() {
   const algorithm = document.querySelector('.algorithm-toggle').getAttribute('data-selected');
   const batteryCapacity = window.batteryCapacity;
@@ -358,7 +368,6 @@ function runAlgorithm() {
     return;
   }
   
-  // Handle PPO and other algorithms via server
   const endpoint = algorithm === 'ppo' ? '/api/run-ppo-inference' : '/api/run-algorithm';
   const requestBody = algorithm === 'ppo' ? {
     pickupNode: pickupNodeId,
@@ -426,124 +435,12 @@ function runAlgorithm() {
   });
 }
 
-// UI Event Handlers
-const algoToggle = document.querySelector('.algorithm-toggle');
-const algoOptions = document.querySelectorAll('.algorithm-option');
-if (algoToggle && algoOptions.length) {
-  algoOptions.forEach(opt => {
-    opt.addEventListener('click', () => {
-      algoOptions.forEach(o => o.classList.remove('active'));
-      opt.classList.add('active');
-      algoToggle.setAttribute('data-selected', opt.getAttribute('data-value'));
-    });
-  });
-}
+setupAlgorithmToggle();
+setupBatterySlider();
+setupPackageSelection();
+setupWindCompass(windAngle, setWindAngleFromDegrees);
+setupVisibilityToggles(map, chargingLayer, edgesLayer);
 
-// Battery slider
-const batterySlider = document.getElementById('battery-slider');
-const batteryValue = document.getElementById('drone-battery-value');
-const batteryFill = document.getElementById('battery-slider-fill');
-if (batterySlider && batteryValue && batteryFill) {
-  function updateBatteryUI(val) {
-    batteryValue.textContent = val;
-    window.batteryCapacity = parseInt(val, 10);
-    const percent = (val - 10) / 90;
-    batteryFill.style.width = (percent * 100) + '%';
-  }
-  batterySlider.addEventListener('input', e => updateBatteryUI(e.target.value));
-  updateBatteryUI(batterySlider.value);
-}
-
-// Package selection
-const packagesContainer = document.getElementById('packages-container');
-const payloadValue = document.getElementById('drone-payload-value');
-if (packagesContainer && payloadValue) {
-  function updatePackagesUI(n) {
-    Array.from(packagesContainer.children).forEach((el, idx) => {
-      if (idx < n) el.classList.add('active');
-      else el.classList.remove('active');
-    });
-    payloadValue.textContent = n;
-    window.maxPayload = n;
-  }
-  Array.from(packagesContainer.children).forEach((el, idx) => {
-    el.addEventListener('click', () => updatePackagesUI(idx + 1));
-  });
-  updatePackagesUI(3);
-}
-
-// Wind compass
-const windCompass = document.getElementById('wind-compass');
-const windArrow = document.getElementById('wind-arrow');
-const windAngleValue = document.getElementById('wind-angle-value');
-
-function setWindAngleFromDegrees(degrees) {
-  windAngle = (degrees * Math.PI / 180);
-  if (windArrow) {
-    windArrow.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
-  }
-  if (windAngleValue) {
-    windAngleValue.textContent = `${Math.round(degrees)}°`;
-  }
-  if (allNodes.length > 0 && allEdges.length > 0) {
-    allEdges = annotateEdges(
-      allEdges.map(e => ({ source: e.source, target: e.target, distance: e.distance })),
-      allNodes,
-      windAngle
-    );
-    drawGraph(allNodes, allEdges, edgesLayer);
-  }
-}
-
-let draggingWind = false;
-function getAngleFromEvent(e) {
-  const rect = windCompass.getBoundingClientRect();
-  const cx = rect.left + rect.width / 2;
-  const cy = rect.top + rect.height / 2;
-  const x = (e.touches ? e.touches[0].clientX : e.clientX) - cx;
-  const y = (e.touches ? e.touches[0].clientY : e.clientY) - cy;
-  let angle = Math.atan2(x, -y) * 180 / Math.PI;
-  if (angle < 0) angle += 360;
-  return angle;
-}
-
-if (windCompass) {
-  windCompass.addEventListener('mousedown', e => {
-    draggingWind = true;
-    setWindAngleFromDegrees(getAngleFromEvent(e));
-  });
-  windCompass.addEventListener('touchstart', e => {
-    draggingWind = true;
-    setWindAngleFromDegrees(getAngleFromEvent(e));
-  });
-  window.addEventListener('mousemove', e => {
-    if (draggingWind) setWindAngleFromDegrees(getAngleFromEvent(e));
-  });
-  window.addEventListener('touchmove', e => {
-    if (draggingWind) setWindAngleFromDegrees(getAngleFromEvent(e));
-  });
-  window.addEventListener('mouseup', () => { draggingWind = false; });
-  window.addEventListener('touchend', () => { draggingWind = false; });
-}
-
-// Visibility toggles
-document.getElementById('toggle-charging').addEventListener('change', function(e) {
-  if (e.target.checked) {
-    map.addLayer(chargingLayer);
-  } else {
-    map.removeLayer(chargingLayer);
-  }
-});
-
-document.getElementById('toggle-edges').addEventListener('change', function(e) {
-  if (e.target.checked) {
-    map.addLayer(edgesLayer);
-  } else {
-    map.removeLayer(edgesLayer);
-  }
-});
-
-// Map interactions
 map.on('click', function(e) {
   if (highlightedNodeId !== null) {
     highlightedNodeId = null;
@@ -551,13 +448,11 @@ map.on('click', function(e) {
   }
 });
 
-// Run button event listener
 const runButton = document.getElementById('run-algo');
 if (runButton) {
   runButton.addEventListener('click', runAlgorithm);
 }
 
-// Layer click handlers for pin placement
 pickupLayer.on('click', (e) => {
   const pickupNodes = allNodes.filter(n => n.type === 'pickup');
   if (pickupMarker) map.removeLayer(pickupMarker);

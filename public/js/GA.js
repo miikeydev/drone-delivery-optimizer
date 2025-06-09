@@ -1,7 +1,3 @@
-/*
- * Genetic Algorithm for Drone Delivery Route Optimisation
- */
-
 import { RNG } from './utils.js';
 import { buildDistanceLookup, findGraphPath } from './pathfinding.js';
 
@@ -23,7 +19,6 @@ export default class GeneticAlgorithm {
     this.edges = edges;
     this.packages = packages;
 
-    // Build distance lookup and weight maps
     this.dist = buildDistanceLookup(nodes, edges);
     this.weightByPickup = new Map();
     this.weightByDelivery = new Map();
@@ -33,7 +28,6 @@ export default class GeneticAlgorithm {
       this.weightByDelivery.set(p.delivery, w);
     }
 
-    // GA parameters
     const {
       populationSize = 50,
       generations = 50,
@@ -55,17 +49,15 @@ export default class GeneticAlgorithm {
       cruiseSpeed, chargeDuration, weights
     });
 
-    // Analyze node types
     this.hubs = nodes.filter(n => n.type === 'hubs').map(n => n.index);
     this.chargingNodes = new Set(nodes.filter(n => n.type === 'charging').map(n => n.index));
     this.pickups = Array.from(new Set(packages.map(p => p.pickup)));
-    this.deliveries = Array.from(new Set(packages.map(p => p.delivery))); // Fixed syntax error
+    this.deliveries = Array.from(new Set(packages.map(p => p.delivery)));
 
     if (this.hubs.length === 0) {
       throw new Error('At least one hub is required');
     }
 
-    // Choose optimal start and end hubs
     if (packages.length > 0) {
       const firstPackage = packages[0];
       this.startHub = this._findClosestHub(firstPackage.pickup);
@@ -75,7 +67,6 @@ export default class GeneticAlgorithm {
       this.endHub = this.hubs[0];
     }
 
-    // Build adjacency list for pathfinding
     this._buildAdjacencyList();
   }
 
@@ -180,12 +171,10 @@ export default class GeneticAlgorithm {
     this.population.sort((a, b) => b.fitness - a.fitness);
     const newPop = [];
     
-    // Elitism
     for (let i = 0; i < this.elitismCount; i++) {
       newPop.push({ ...this.population[i] });
     }
 
-    // Generate offspring
     while (newPop.length < this.popSize) {
       const parent1 = this._tournamentSelect();
       const parent2 = this._tournamentSelect();
@@ -302,15 +291,12 @@ export default class GeneticAlgorithm {
     
     const route = [];
     
-    // Hub to Pickup
     const hubToPickupPath = findGraphPath(this.startHub, package1.pickup, this._adjacencyList);
     route.push(...hubToPickupPath);
     
-    // Pickup to Delivery  
     const pickupToDeliveryPath = findGraphPath(package1.pickup, package1.delivery, this._adjacencyList);
     route.push(...pickupToDeliveryPath.slice(1));
     
-    // Delivery to Hub
     const deliveryToHubPath = findGraphPath(package1.delivery, this.endHub, this._adjacencyList);
     route.push(...deliveryToHubPath.slice(1));
     

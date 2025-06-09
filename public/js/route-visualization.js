@@ -1,7 +1,3 @@
-/**
- * Route visualization utilities
- */
-
 const COLORS = {
   hubs: '#e74c3c',
   charging: '#2980b9',
@@ -34,7 +30,6 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
   
   const dashPattern = extraInfo.failed ? '10, 10' : (extraInfo.algorithm === 'PPO' ? '15, 5' : 'none');
   
-  // Draw route line
   if (routeIndices.length > 1) {
     const routeCoords = routeIndices.map(idx => {
       if (idx < allNodes.length) {
@@ -65,7 +60,6 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
     }
   }
   
-  // Draw step markers
   routeIndices.forEach((nodeIdx, stepIdx) => {
     if (nodeIdx < allNodes.length) {
       const node = allNodes[nodeIdx];
@@ -128,7 +122,6 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
     }
   });
   
-  // Info badge
   const badgeColor = extraInfo.failed ? '#e74c3c' : routeColor;
   const status = extraInfo.failed ? 'FAILED' : 'SUCCESS';
   
@@ -148,11 +141,9 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
     try {
       map.removeControl(infoBadge);
     } catch (e) {
-      // Badge already removed
     }
   }, 8000);
   
-  // Zoom to route
   if (routeLayer.getLayers().length > 0) {
     const group = new L.featureGroup(routeLayer.getLayers());
     map.fitBounds(group.getBounds().pad(0.15));

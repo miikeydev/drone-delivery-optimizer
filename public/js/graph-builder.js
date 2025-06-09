@@ -1,10 +1,5 @@
-/**
- * Graph building and visualization utilities
- */
-
 import { haversineDistance, gaussianRandom, rgbToHex } from './utils.js';
 
-// Build k-nearest neighbors graph from nodes
 export function buildGraph(nodes, k = 10) {
   const edges = [];
   
@@ -29,7 +24,6 @@ export function buildGraph(nodes, k = 10) {
   return edges;
 }
 
-// Annotate edges with wind effects and costs
 export function annotateEdges(edges, nodes, windAngle, alpha = 0.3, beta = 0.05) {
   return edges.map(edge => {
     const sourceNode = nodes[edge.source];
@@ -53,7 +47,6 @@ export function annotateEdges(edges, nodes, windAngle, alpha = 0.3, beta = 0.05)
   });
 }
 
-// Draw the graph on the map
 export function drawGraph(nodes, edges, edgesLayer) {
   edgesLayer.clearLayers();
   

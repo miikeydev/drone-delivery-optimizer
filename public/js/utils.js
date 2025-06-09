@@ -1,8 +1,3 @@
-/**
- * Utilities for the drone delivery optimizer
- */
-
-// Simple seeded random number generator (Linear Congruential Generator)
 class SeededRandom {
   constructor(seed) {
     this.seed = seed % 2147483647;
@@ -15,15 +10,11 @@ class SeededRandom {
   }
 }
 
-// Change la graine ici pour avoir une carte reproductible
 const seededRNG = new SeededRandom(42);
 export const RNG = () => seededRNG.next();
 
-/**
- * Calculate haversine distance between two points in km
- */
 export function haversineDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth radius in kilometers
+  const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a = 
@@ -34,27 +25,17 @@ export function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-/**
- * Generates a random number from a Gaussian distribution
- */
 export function gaussianRandom(mean = 0, stdev = 1) {
-  const u = 1 - RNG(); // Converting [0,1) to (0,1] using RNG instead of Math.random()
+  const u = 1 - RNG();
   const v = RNG();
   const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
   return z * stdev + mean;
 }
 
-/**
- * Convert RGB to Hex color code
- */
 export function rgbToHex(r, g, b) {
   return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
 
-/**
- * Helper to check if a point is inside metropolitan France.
- * Requires window.turf to be loaded (see index.html).
- */
 let _francePoly = null;
 export function setFrancePolygon(geojson) {
   _francePoly = geojson;
