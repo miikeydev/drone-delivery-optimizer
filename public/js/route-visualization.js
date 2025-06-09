@@ -70,18 +70,24 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
       else if (battery < 50) markerColor = '#f39c12';
       else if (battery < 80) markerColor = '#f1c40f';
       
+      const isStart = stepIdx === 0;
+      const isEnd = stepIdx === routeIndices.length - 1;
+      const radius = isStart ? 12 : (isEnd ? 10 : 8);
+      const weight = isStart ? 3 : 2;
+      const borderColor = isStart ? '#2c3e50' : '#fff';
+      
       const stepMarker = L.circleMarker([node.lat, node.lng], {
-        radius: stepIdx === 0 ? 12 : (stepIdx === routeIndices.length - 1 ? 10 : 8),
+        radius: radius,
         fillColor: markerColor,
-        color: stepIdx === 0 ? '#2c3e50' : '#fff',
-        weight: stepIdx === 0 ? 3 : 2,
+        color: borderColor,
+        weight: weight,
         fillOpacity: 0.9
       }).addTo(routeLayer);
       
       let popupContent = `
         <div style="min-width: 200px;">
           <h4 style="margin: 0 0 8px 0; color: ${routeColor};">
-            ${stepIdx === 0 ? '🚁 START' : (stepIdx === routeIndices.length - 1 ? '🏁 END' : `Step ${stepIdx + 1}`)}
+            ${isStart ? 'START' : (isEnd ? 'END' : `Step ${stepIdx + 1}`)}
           </h4>
           <b>Node:</b> ${node.id}<br>
           <b>Type:</b> ${node.type}<br>
@@ -99,19 +105,25 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
       }
       
       if (node.type === 'pickup') {
-        popupContent += `<span style="color: ${COLORS.pickup};">📦 Pickup Point</span><br>`;
+        popupContent += `<span style="color: ${COLORS.pickup};">Pickup Point</span><br>`;
       } else if (node.type === 'delivery') {
-        popupContent += `<span style="color: ${COLORS.delivery};">🎯 Delivery Point</span><br>`;
+        popupContent += `<span style="color: ${COLORS.delivery};">Delivery Point</span><br>`;
       } else if (node.type === 'charging') {
-        popupContent += `<span style="color: ${COLORS.charging};">⚡ Charging Station</span><br>`;
+        popupContent += `<span style="color: ${COLORS.charging};">Charging Station</span><br>`;
       } else if (node.type === 'hubs') {
-        popupContent += `<span style="color: ${COLORS.hubs};">🏢 Hub</span><br>`;
+        if (isStart) {
+          popupContent += `<span style="color: ${COLORS.hubs};">Departure Hub</span><br>`;
+        } else if (isEnd) {
+          popupContent += `<span style="color: ${COLORS.hubs};">Arrival Hub</span><br>`;
+        } else {
+          popupContent += `<span style="color: ${COLORS.hubs};">Hub</span><br>`;
+        }
       }
       
       popupContent += '</div>';
       stepMarker.bindPopup(popupContent);
       
-      if (stepIdx > 0) {
+      if (stepIdx > 0 && !isEnd) {
         const stepLabel = L.divIcon({
           html: `<div style="color: white; font-weight: bold; font-size: 10px; text-align: center; line-height: 16px;">${stepIdx}</div>`,
           className: 'step-number-label',

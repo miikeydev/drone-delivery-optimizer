@@ -850,3 +850,17 @@ button:disabled {
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+.step-number-label {
+  background: rgba(0, 0, 0, 0.7) !important;
+  border-radius: 50% !important;
+  border: none !important;
+}
+
+.end-label {
+  background: rgba(142, 68, 173, 0.8) !important;
+  border-radius: 8px !important;
+  border: 1px solid #8e44ad !important;
+  color: white !important;
+  font-weight: bold !important;
+}
