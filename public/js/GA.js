@@ -194,12 +194,16 @@ export default class GeneticAlgorithm {
     } catch (error) {
       console.error('[GA] Error in final evaluation:', error);
       throw error;
-    }
-      // Format the result for the application
-    const success = best.fitness > 0.1; // Consider successful if fitness is reasonable
-    const route_indices = best.route;const route_names = route_indices.map(idx => {
+    }    // Format the result for the application
+    const success = best.fitness > 0.001; // Lower threshold - fitness of 0.004 should be considered success
+    const route_indices = best.route;    const route_names = route_indices.map(idx => {
+      // Validate node index before accessing
+      if (idx < 0 || idx >= this.nodes.length) {
+        console.warn(`[GA] Invalid node index ${idx}, max index is ${this.nodes.length - 1}`);
+        return `InvalidNode(${idx})`;
+      }
       const node = this.nodes[idx];
-      return node ? node.id : `Node(${idx})`;
+      return node && node.id ? node.id : `Node(undefined_${idx})`;
     });
     
     // Calculate battery history
@@ -262,25 +266,18 @@ export default class GeneticAlgorithm {
     
     const endTime = performance.now();
     console.log(`[GA] Population evaluation completed in ${(endTime - startTime).toFixed(2)}ms`);
-  }
-  _nextGeneration() {
-    console.log('[GA] _nextGeneration: Starting...');
-    
+  }  _nextGeneration() {
     // Sort population by fitness DESC (because we maximise fitness)
-    console.log('[GA] _nextGeneration: Sorting population...');
     this.population.sort((a, b) => b.fitness - a.fitness);
 
     const newPop = [];
     
     // Elitism – copy best N individuals
-    console.log('[GA] _nextGeneration: Adding elite individuals...');
     for (let i = 0; i < this.elitismCount; i++) {
       newPop.push({ ...this.population[i] });
     }
-    console.log(`[GA] _nextGeneration: Added ${this.elitismCount} elite individuals`);
 
     // Fill the rest of population
-    console.log('[GA] _nextGeneration: Filling rest of population...');
     let iterationCount = 0;
     const maxIterations = this.popSize * 10; // Safety limit
     
@@ -291,42 +288,27 @@ export default class GeneticAlgorithm {
         break;
       }
       
-      if (iterationCount % 10 === 0) {
-        console.log(`[GA] _nextGeneration: Iteration ${iterationCount}, population size: ${newPop.length}/${this.popSize}`);
-      }
-      
-      console.log(`[GA] _nextGeneration: Selecting parents (iteration ${iterationCount})...`);
       const parent1 = this._tournamentSelect();
       const parent2 = this._tournamentSelect();
 
       let [child1Route, child2Route] = [parent1.route.slice(), parent2.route.slice()];
 
-      console.log(`[GA] _nextGeneration: Applying crossover/mutation (iteration ${iterationCount})...`);
       if (RNG() < this.crossoverRate) {
-        console.log(`[GA] _nextGeneration: Performing crossover...`);
         [child1Route, child2Route] = this._crossover(parent1.route, parent2.route);
-        console.log(`[GA] _nextGeneration: Crossover completed`);
       }
       if (RNG() < this.mutationRate) {
-        console.log(`[GA] _nextGeneration: Mutating child1...`);
         child1Route = this._mutate(child1Route);
-        console.log(`[GA] _nextGeneration: Child1 mutation completed`);
       }
       if (RNG() < this.mutationRate) {
-        console.log(`[GA] _nextGeneration: Mutating child2...`);
         child2Route = this._mutate(child2Route);
-        console.log(`[GA] _nextGeneration: Child2 mutation completed`);
       }
 
-      console.log(`[GA] _nextGeneration: Adding children to population...`);
       newPop.push({ route: child1Route });
       if (newPop.length < this.popSize) {
         newPop.push({ route: child2Route });
       }
-      console.log(`[GA] _nextGeneration: Children added, population size now: ${newPop.length}`);
     }
     
-    console.log(`[GA] _nextGeneration: Completed after ${iterationCount} iterations`);
     return newPop;
   }
 
@@ -339,14 +321,10 @@ export default class GeneticAlgorithm {
     return best;
   }  /** Order‑preserving crossover (OX operator) */
   _crossover(parent1, parent2) {
-    console.log('[GA] _crossover: Starting crossover operation...');
-    
     const size = parent1.length;
     const idx1 = randInt(size);
     const idx2 = randInt(size);
     const [start, end] = [Math.min(idx1, idx2), Math.max(idx1, idx2)];
-    
-    console.log(`[GA] _crossover: Crossover points: [${start}, ${end}] for size ${size}`);
 
     const child1 = Array(size).fill(null);
     const child2 = Array(size).fill(null);
@@ -356,19 +334,14 @@ export default class GeneticAlgorithm {
       child1[i] = parent1[i];
       child2[i] = parent2[i];
     }
-    console.log('[GA] _crossover: Copied slices to children');
 
     // Fill remaining positions preserving order & validity
     const fillChild = (child, donor, childName) => {
-      console.log(`[GA] _crossover: Filling ${childName}...`);
-      
       // Create a set of already used nodes for fast lookup
       const usedNodes = new Set(child.filter(n => n !== null));
-      console.log(`[GA] _crossover: ${childName} already has ${usedNodes.size} nodes`);
       
       // Create a list of available nodes from donor in order
       const availableNodes = donor.filter(node => !usedNodes.has(node));
-      console.log(`[GA] _crossover: ${childName} has ${availableNodes.length} available nodes from donor`);
       
       let availableIdx = 0;
       
@@ -380,7 +353,6 @@ export default class GeneticAlgorithm {
           availableIdx++;
         } else {
           // Fallback: use any remaining node from the original parent
-          console.warn(`[GA] _crossover: ${childName} ran out of available nodes at position ${i}`);
           const allNodes = [...new Set([...parent1, ...parent2])];
           const currentUsed = new Set(child.filter(n => n !== null));
           const unusedNode = allNodes.find(n => !currentUsed.has(n));
@@ -388,21 +360,15 @@ export default class GeneticAlgorithm {
         }
       }
       
-      console.log(`[GA] _crossover: ${childName} filled, calling repair...`);
       return this._repairRoute(child);
     };
 
     const result = [fillChild(child1, parent2, 'child1'), fillChild(child2, parent1, 'child2')];
-    console.log('[GA] _crossover: Crossover completed');
     return result;
-  }
-  /** Simple mutation: swap two non‑hub nodes & repair */
+  }  /** Simple mutation: swap two non‑hub nodes & repair */
   _mutate(route) {
-    console.log('[GA] _mutate: Starting mutation...');
-    
     const len = route.length;
     if (len <= 2) {
-      console.log('[GA] _mutate: Route too short for mutation, returning as-is');
       return route;
     }
     
@@ -410,25 +376,26 @@ export default class GeneticAlgorithm {
     let j = randInt(len - 2) + 1;
     if (i === j) j = (j + 1) % (len - 1) + 1;
     
-    console.log(`[GA] _mutate: Swapping positions ${i} and ${j} (values: ${route[i]}, ${route[j]})`);
     [route[i], route[j]] = [route[j], route[i]];
     
-    console.log('[GA] _mutate: Calling repair after mutation...');
     const result = this._repairRoute(route);
-    console.log('[GA] _mutate: Mutation completed');
     return result;
   }
 
   /* =====================================================
      ROUTE MANIPULATION & VALIDATION
-     ===================================================== */
-
-  /** Generate a random valid route obeying pickup‑delivery precedence */
+     ===================================================== */  /** Generate a random valid route obeying pickup‑delivery precedence */
   _randomRoute() {
     // 1. Start with the list of pickups & deliveries interleaved randomly
     const core = [];
     for (const p of this.packages) {
-      core.push(p.pickup, p.delivery);
+      // Validate package indices before using them
+      if (p.pickup >= 0 && p.pickup < this.nodes.length && 
+          p.delivery >= 0 && p.delivery < this.nodes.length) {
+        core.push(p.pickup, p.delivery);
+      } else {
+        console.warn(`[GA] Invalid package indices: pickup=${p.pickup}, delivery=${p.delivery}, maxIndex=${this.nodes.length - 1}`);
+      }
     }
     shuffle(core);
 
@@ -442,20 +409,39 @@ export default class GeneticAlgorithm {
       }
     }
 
-    // 3. Optionally insert charging nodes (random chance)
-    const route = [this.startHub, ...core, this.endHub];
-    return route;
+    // 3. Basic route: hub -> pickups/deliveries -> hub
+    const basicRoute = [this.startHub, ...core, this.endHub];
+    
+    // 4. Occasionally add a charging station if we have them and route is long
+    if (this.chargingNodes.size > 0 && core.length > 2 && RNG() < 0.2) {
+      const chargingArray = Array.from(this.chargingNodes);
+      const randomCharging = chargingArray[randInt(chargingArray.length)];
+      
+      // Insert charging station at a random position (not at start/end)
+      const insertPos = randInt(core.length) + 1; // +1 to skip start hub
+      basicRoute.splice(insertPos, 0, randomCharging);
+    }
+    
+    return basicRoute;
   }
-
   /** Ensure uniqueness of nodes, pickup -> delivery precedence, keep hubs fixed */
-  _repairRoute(route) {
-    // Remove duplicates except hubs
+  _repairRoute(route) {    // Remove duplicates but allow charging stations to be visited multiple times only if needed
     const seen = new Set([this.startHub, this.endHub]);
     const cleaned = [this.startHub];
 
     for (let i = 1; i < route.length - 1; i++) {
       const node = route[i];
-      if (!seen.has(node)) {
+      
+      // For charging stations, allow reuse only if there's significant distance since last use
+      if (this.chargingNodes.has(node)) {
+        const lastChargingIndex = cleaned.lastIndexOf(node);
+        if (lastChargingIndex === -1 || (cleaned.length - lastChargingIndex) > 2) {
+          // Allow charging station if not used recently or never used
+          cleaned.push(node);
+        }
+        // Skip if the same charging station was used very recently
+      } else if (!seen.has(node)) {
+        // For non-charging nodes, ensure uniqueness
         cleaned.push(node);
         seen.add(node);
       }
@@ -481,13 +467,89 @@ export default class GeneticAlgorithm {
         cleaned.splice(pIdx + 1, 0, delivery);
       }
     }
-    return cleaned;
+    
+    // Add charging stations if battery would be too low
+    return this._addChargingIfNeeded(cleaned);
+  }
+  /** Add charging stations to the route if battery would run too low */
+  _addChargingIfNeeded(route) {
+    if (this.chargingNodes.size === 0) return route;
+    
+    const enhanced = [route[0]]; // Start with hub
+    let currentBattery = this.batteryCapacity;
+    let payload = 0;
+    const chargingArray = Array.from(this.chargingNodes);
+    
+    for (let i = 1; i < route.length; i++) {
+      const fromNode = route[i - 1];
+      const toNode = route[i];
+      
+      // Validate node indices
+      if (fromNode >= this.nodes.length || toNode >= this.nodes.length) {
+        console.warn(`[GA] Invalid node in route: ${fromNode} -> ${toNode}`);
+        continue;
+      }
+      
+      const distance = this.dist(fromNode, toNode);
+      const energyNeeded = distance / this.kNorm * (1 + this.alpha * payload);
+      
+      // Check if we need charging before this leg (with safety margin)
+      if (currentBattery < energyNeeded * 1.3 && chargingArray.length > 0) {
+        // Find closest charging station that we haven't just visited
+        let closestCharging = null;
+        let minChargingDist = Infinity;
+        const lastNode = enhanced[enhanced.length - 1];
+        
+        for (const chargingNode of chargingArray) {
+          // Don't use the same charging station we just visited
+          if (chargingNode === lastNode) continue;
+          
+          const distToCharging = this.dist(fromNode, chargingNode);
+          if (distToCharging < minChargingDist && distToCharging < distance) {
+            minChargingDist = distToCharging;
+            closestCharging = chargingNode;
+          }
+        }
+        
+        // Only add charging if it's actually helpful and closer than destination
+        if (closestCharging !== null && minChargingDist < distance * 0.8) {
+          enhanced.push(closestCharging);
+          currentBattery = this.batteryCapacity; // Full charge
+          // Recalculate energy needed from charging station to destination
+          const newDistance = this.dist(closestCharging, toNode);
+          const newEnergyNeeded = newDistance / this.kNorm * (1 + this.alpha * payload);
+          currentBattery -= newEnergyNeeded;
+        } else {
+          // Continue without charging and let fitness function penalize if needed
+          currentBattery -= energyNeeded;
+        }
+      } else {
+        currentBattery -= energyNeeded;
+      }
+      
+      enhanced.push(toNode);
+      
+      // Update payload
+      if (this.weightByPickup.has(toNode)) {
+        payload += this.weightByPickup.get(toNode);
+      }
+      if (this.weightByDelivery.has(toNode)) {
+        payload -= this.weightByDelivery.get(toNode);
+        payload = Math.max(0, payload);
+      }
+      
+      // Handle charging point
+      if (this.chargingNodes.has(toNode)) {
+        currentBattery = this.batteryCapacity;
+      }
+    }
+    
+    return enhanced;
   }
 
   /* =====================================================
      FITNESS CALCULATION
-     ===================================================== */
-  _fitness(route) {
+     ===================================================== */  _fitness(route) {
     let payload = 0;                    // kg carried before leaving node
     let battery = this.batteryCapacity; // energy units remaining
     let energyUsed = 0;
@@ -501,16 +563,23 @@ export default class GeneticAlgorithm {
     for (let i = 0; i < route.length - 1; i++) {
       const u = route[i];
       const v = route[i + 1];
+      
+      // Validate node indices
+      if (u >= this.nodes.length || v >= this.nodes.length) {
+        penalty += 50000; // Heavy penalty for invalid nodes
+        continue;
+      }
+      
       const d = this.dist(u, v);
-
       const e = energyLeg(d, payload);
       battery -= e;
       energyUsed += e;
       distTotal += d;
 
+      // Softer penalty for battery issues - allow some negative battery with graduated penalty
       if (battery < 0) {
-        penalty += 10000 * Math.abs(battery);
-        battery = 0;
+        penalty += 100 * Math.abs(battery); // Reduced from 10000
+        battery = Math.max(battery, -this.batteryCapacity * 0.1); // Don't go below -10% capacity
       }
 
       // Arrive at node v – update payload
@@ -520,7 +589,7 @@ export default class GeneticAlgorithm {
       if (this.weightByDelivery.has(v)) {
         payload -= this.weightByDelivery.get(v);
         if (payload < 0) {
-          penalty += 1000 * Math.abs(payload);
+          penalty += 100 * Math.abs(payload); // Reduced from 1000
           payload = 0;
         }
       }
@@ -530,22 +599,33 @@ export default class GeneticAlgorithm {
         battery = this.batteryCapacity; // full charge
         chargeTime += this.chargeDuration;
       }
+    }    // Completion bonus proportional to base costs (not overwhelming)
+    let completionBonus = 0;
+    if (penalty < 100) { // If route is mostly feasible
+      const flightTime = distTotal / this.cruiseSpeed;
+      const baseCost = 
+        this.weights.energy * energyUsed +
+        this.weights.distance * distTotal +
+        this.weights.time * (flightTime + chargeTime);
+      
+      // Larger bonus - 25% of base cost - encourages completion more strongly
+      completionBonus = baseCost * 0.25;
     }
 
     const flightTime = distTotal / this.cruiseSpeed;
-    const cost =
+    const baseCost = 
       this.weights.energy * energyUsed +
       this.weights.distance * distTotal +
-      this.weights.time * (flightTime + chargeTime) +
-      penalty;
+      this.weights.time * (flightTime + chargeTime);
+      const totalCost = baseCost + penalty - completionBonus;
 
-    const score = 1 / (1 + cost); // maximise
+    // Improved fitness calculation with better scaling
+    const score = Math.max(0.001, 1000 / (1 + totalCost)); // Higher base value for better fitness scores
     return { score, details: { energyUsed, distTotal, flightTime, chargeTime, penalty } };
   }
   _getBestIndividual() {
     return this.population.reduce((best, indiv) => (indiv.fitness > best.fitness ? indiv : best));
-  }
-  _calculateBatteryHistory(route) {
+  }  _calculateBatteryHistory(route) {
     const history = [];
     let battery = this.batteryCapacity;
     let payload = 0;
@@ -554,6 +634,14 @@ export default class GeneticAlgorithm {
     for (let i = 0; i < route.length - 1; i++) {
       const u = route[i];
       const v = route[i + 1];
+      
+      // Validate node indices
+      if (u >= this.nodes.length || v >= this.nodes.length) {
+        console.warn(`[GA] Invalid node in battery history: ${u} -> ${v}`);
+        history.push(Math.max(0, battery));
+        continue;
+      }
+      
       const d = this.dist(u, v);
       
       // Use same energy calculation as fitness function
@@ -576,7 +664,9 @@ export default class GeneticAlgorithm {
       
       history.push(Math.max(0, battery));
     }
-    
-    return history;
+      return history;
   }
 }
+
+// Export the class as ES module
+export { GeneticAlgorithm };

@@ -504,7 +504,8 @@ function runAlgorithm() {
     return;
   }
   
-  console.log(`Running ${algorithm}: ${pickupNodeId} -> ${deliveryNodeId}`);
+  console.log(`[runAlgorithm] Running ${algorithm}: ${pickupNodeId} -> ${deliveryNodeId}`);
+  console.log(`[runAlgorithm] UI State Check - Pickup: ${pickupNodeId}, Delivery: ${deliveryNodeId}`);
   
   const runButton = document.getElementById('run-algo');
   runButton.disabled = true;
@@ -524,20 +525,26 @@ function runAlgorithm() {
       if (!pickupNode || !deliveryNode) {
         throw new Error(`Could not find nodes: pickup=${pickupNodeId}, delivery=${deliveryNodeId}`);
       }
-      
-      console.log(`[GA] Pickup Index: ${pickupNode.index}, Delivery Index: ${deliveryNode.index}`);
+        console.log(`[GA] Pickup Index: ${pickupNode.index}, Delivery Index: ${deliveryNode.index}`);
       
       // Create packages array in the format expected by GA (using indices)
+      // Since user can select any pickup and delivery, create a single package pairing them
       const packages = [{
         pickup: pickupNode.index,
         delivery: deliveryNode.index,
         weight: 1 // Default weight
       }];
       
+      console.log('[GA] Created package pairing:', packages);
+      
       // Create options object with drone parameters
       const options = {
         batteryCapacity: batteryCapacity,
-        maxPayload: maxPayload
+        maxPayload: maxPayload,
+        populationSize: 30,      // Smaller for single package
+        generations: 30,         // Fewer generations for testing
+        crossoverRate: 0.8,
+        mutationRate: 0.3        // Higher mutation for exploration
       };
         console.log('[GA] Creating GeneticAlgorithm instance...');
       const ga = new GeneticAlgorithm(
@@ -1036,24 +1043,24 @@ function placeDefaultPins() {
   console.log("[placeDefaultPins] Starting pin placement...");
   console.log("[placeDefaultPins] Total nodes available:", allNodes.length);
   
-  // Pickup
+  // Pickup - use first available pickup for consistency
   const pickupNodes = allNodes.filter(n => n.type === 'pickup');
   console.log("[placeDefaultPins] Found pickup nodes:", pickupNodes.length);
   
   if (pickupNodes.length > 0) {
-    const randomPickup = pickupNodes[Math.floor(Math.random() * pickupNodes.length)];
-    console.log("[placeDefaultPins] Selected pickup:", randomPickup.id);
+    const defaultPickup = pickupNodes[0]; // Use first pickup for deterministic behavior
+    console.log("[placeDefaultPins] Selected pickup:", defaultPickup.id);
     
     if (pickupMarker) map.removeLayer(pickupMarker);
-    pickupMarker = L.marker([randomPickup.lat, randomPickup.lng], {
+    pickupMarker = L.marker([defaultPickup.lat, defaultPickup.lng], {
       draggable: true,
       icon: L.icon({
         iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-orange.png',
         iconSize: [25, 41],
         iconAnchor: [12, 41],
         popupAnchor: [1, -34],
-      })    }).addTo(map);    pickupNodeId = randomPickup.id; // Use id for consistency with click handlers
-    updatePickupDisplay(randomPickup.id); // Display the readable id
+      })    }).addTo(map);    pickupNodeId = defaultPickup.id; // Use id for consistency with click handlers
+    updatePickupDisplay(defaultPickup.id); // Display the readable id
       pickupMarker.on('dragend', function(e) {
       const pos = e.target.getLatLng();
       const newPickupNode = findClosestNode(pos, pickupNodes);
@@ -1068,24 +1075,24 @@ function placeDefaultPins() {
     console.warn("[placeDefaultPins] No pickup nodes found!");
   }
 
-  // Delivery
+  // Delivery - use first available delivery for consistency
   const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
   console.log("[placeDefaultPins] Found delivery nodes:", deliveryNodes.length);
   
   if (deliveryNodes.length > 0) {
-    const randomDelivery = deliveryNodes[Math.floor(Math.random() * deliveryNodes.length)];
-    console.log("[placeDefaultPins] Selected delivery:", randomDelivery.id);
+    const defaultDelivery = deliveryNodes[0]; // Use first delivery for deterministic behavior
+    console.log("[placeDefaultPins] Selected delivery:", defaultDelivery.id);
     
     if (deliveryMarker) map.removeLayer(deliveryMarker);
-    deliveryMarker = L.marker([randomDelivery.lat, randomDelivery.lng], {
+    deliveryMarker = L.marker([defaultDelivery.lat, defaultDelivery.lng], {
       draggable: true,
       icon: L.icon({
         iconUrl: 'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-green.png',
         iconSize: [25, 41],
         iconAnchor: [12, 41],
         popupAnchor: [1, -34],
-      })    }).addTo(map);    deliveryNodeId = randomDelivery.id; // Use id for consistency with click handlers
-    updateDeliveryDisplay(randomDelivery.id); // Display the readable id
+      })    }).addTo(map);    deliveryNodeId = defaultDelivery.id; // Use id for consistency with click handlers
+    updateDeliveryDisplay(defaultDelivery.id); // Display the readable id
       deliveryMarker.on('dragend', function(e) {
       const pos = e.target.getLatLng();
       const newDeliveryNode = findClosestNode(pos, deliveryNodes);
@@ -1105,6 +1112,7 @@ function placeDefaultPins() {
 
 // Remplacer l'écouteur sur pickupLayer et deliveryLayer par le comportement suivant :
 pickupLayer.on('click', (e) => {
+  console.log("[pickupLayer.click] User clicked on pickup layer");
   const pickupNodes = allNodes.filter(n => n.type === 'pickup');
   if (pickupMarker) map.removeLayer(pickupMarker);
   const latlng = e.latlng;
@@ -1118,6 +1126,7 @@ pickupLayer.on('click', (e) => {
     })  }).addTo(map);
   const pickupNode = findClosestNode(latlng, pickupNodes);
   pickupNodeId = pickupNode ? pickupNode.id : null;
+  console.log("[pickupLayer.click] Selected pickup:", pickupNodeId);
   updatePickupDisplay(pickupNodeId !== null ? pickupNodeId : '–');
     pickupMarker.on('dragend', function(e) {
     const pos = e.target.getLatLng();
@@ -1132,6 +1141,7 @@ pickupLayer.on('click', (e) => {
 });
 
 deliveryLayer.on('click', (e) => {
+  console.log("[deliveryLayer.click] User clicked on delivery layer");
   const deliveryNodes = allNodes.filter(n => n.type === 'delivery');
   if (deliveryMarker) map.removeLayer(deliveryMarker);
   const latlng = e.latlng;
@@ -1145,6 +1155,7 @@ deliveryLayer.on('click', (e) => {
     })  }).addTo(map);
   const deliveryNode = findClosestNode(latlng, deliveryNodes);
   deliveryNodeId = deliveryNode ? deliveryNode.id : null;
+  console.log("[deliveryLayer.click] Selected delivery:", deliveryNodeId);
   updateDeliveryDisplay(deliveryNodeId !== null ? deliveryNodeId : '–');
     deliveryMarker.on('dragend', function(e) {
     const pos = e.target.getLatLng();

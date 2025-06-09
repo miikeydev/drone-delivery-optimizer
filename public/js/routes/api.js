@@ -1,9 +1,15 @@
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
+import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import ppoService from '../services/ppoService.js';
+import config from '../config/index.js';
+
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const router = express.Router();
-const ppoService = require('../services/ppoService');
-const config = require('../config');
 
 router.get('/strategic-points', (req, res) => {
   const mockNodes = [];
@@ -107,4 +113,4 @@ router.post('/save-graph', (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

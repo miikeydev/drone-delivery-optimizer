@@ -1,10 +1,23 @@
 /**
  * Utilities for the drone delivery optimizer
  */
-import seedrandom from 'https://cdn.skypack.dev/seedrandom@3.0.5';
+
+// Simple seeded random number generator (Linear Congruential Generator)
+class SeededRandom {
+  constructor(seed) {
+    this.seed = seed % 2147483647;
+    if (this.seed <= 0) this.seed += 2147483646;
+  }
+  
+  next() {
+    this.seed = (this.seed * 16807) % 2147483647;
+    return (this.seed - 1) / 2147483646;
+  }
+}
 
 // Change la graine ici pour avoir une carte reproductible
-export const RNG = seedrandom('drone-project-42');
+const seededRNG = new SeededRandom(42);
+export const RNG = () => seededRNG.next();
 
 /**
  * Calculate haversine distance between two points in km
