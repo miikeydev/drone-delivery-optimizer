@@ -1,15 +1,11 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-// Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Try to load dotenv, but don't fail if it's not available
 let dotenvLoaded = false;
 try {
-  // For ES modules, we'll skip dotenv for simplicity
-  // You can manually set environment variables if needed
   console.log('Using default configuration values');
   dotenvLoaded = true;
 } catch (e) {

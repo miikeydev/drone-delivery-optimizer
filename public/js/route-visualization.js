@@ -84,7 +84,6 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
         fillOpacity: 0.9
       }).addTo(routeLayer);
       
-      // Calculate additional step information
       let distanceFromPrevious = 0;
       let energyUsed = 0;
       let timeElapsed = 0;
@@ -95,8 +94,8 @@ export function visualizeRoute(routeIndices, batteryHistory = [], extraInfo = {}
           Math.pow((node.lat - prevNode.lat) * 111, 2) + 
           Math.pow((node.lng - prevNode.lng) * 111 * Math.cos(node.lat * Math.PI / 180), 2)
         );
-        energyUsed = distanceFromPrevious * 0.8; // Simplified energy calculation
-        timeElapsed = distanceFromPrevious / 60; // Assuming 60 km/h average speed
+        energyUsed = distanceFromPrevious * 0.8;
+        timeElapsed = distanceFromPrevious / 60; 
       }
       
       let popupContent = `

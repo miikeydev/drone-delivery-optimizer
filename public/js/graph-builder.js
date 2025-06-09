@@ -113,7 +113,6 @@ export function drawGraph(nodes, edges, edgesLayer) {
   });
 }
 
-// Highlight edges connected to a node
 export function highlightNodeConnections(nodeIndex, edgesLayer, allEdges) {
   edgesLayer.eachLayer(layer => {
     if (layer instanceof L.Polyline) {
