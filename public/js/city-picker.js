@@ -61,7 +61,7 @@ export async function pickCityPoints() {
   try {
     const resp = await fetch('/data/cities.json');
     if (!resp.ok) {
-      throw new Error('Impossible de charger les données des villes');
+      throw new Error('Unable to load city data');
     }
     const { cities } = await resp.json();
 
@@ -140,7 +140,7 @@ export async function pickCityPoints() {
     return { hubs, charging, delivery, pickup };
 
   } catch (error) {
-    console.error('Erreur lors du chargement des villes:', error);
+    console.error('Error loading cities:', error);
     return { hubs: [], charging: [], delivery: [], pickup: [] };
   }
 }

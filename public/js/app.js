@@ -341,10 +341,10 @@ function runAlgorithm() {
         
         visualizeRoute(result.route_indices, result.battery_history, extraInfo, allNodes, map);
         
-        const successMsg = `✅ GA Success!\nFitness: ${result.fitness.toFixed(2)}\nSteps: ${result.stats.steps}\nBattery used: ${result.stats.battery_used.toFixed(1)}%\nFinal battery: ${result.stats.battery_final.toFixed(1)}%\nRoute: ${result.route_names.join(' → ')}`;
+        const successMsg = `GA Success!\nFitness: ${result.fitness.toFixed(2)}\nSteps: ${result.stats.steps}\nBattery used: ${result.stats.battery_used.toFixed(1)}%\nFinal battery: ${result.stats.battery_final.toFixed(1)}%\nRoute: ${result.route_names.join(' → ')}`;
         alert(successMsg);
       } else {
-        const failMsg = `❌ GA Failed!\nNo valid route found\nBest fitness: ${result.fitness.toFixed(2)}\nTry adjusting parameters or selecting different points.`;
+        const failMsg = `GA Failed!\nNo valid route found\nBest fitness: ${result.fitness.toFixed(2)}\nTry adjusting parameters or selecting different points.`;
         alert(failMsg);
         
         if (result.route_indices.length > 0) {
@@ -409,10 +409,10 @@ function runAlgorithm() {
         visualizeRoute(routeIndices, batteryHistory, extraInfo, allNodes, map);
         
         if (stats.success) {
-          const successMsg = `✅ Success!\nSteps: ${stats.steps || 'N/A'}\nBattery used: ${stats.batteryUsed || stats.battery_used || 'N/A'}%\nFinal battery: ${stats.battery_final || 'N/A'}%\nRoute: ${routeNames.join(' → ')}`;
+          const successMsg = `Success!\nSteps: ${stats.steps || 'N/A'}\nBattery used: ${stats.batteryUsed || stats.battery_used || 'N/A'}%\nFinal battery: ${stats.battery_final || 'N/A'}%\nRoute: ${routeNames.join(' → ')}`;
           alert(successMsg);
         } else {
-          const failMsg = `❌ Mission failed!\nReason: ${stats.termination_reason || 'Unknown'}\nSteps taken: ${stats.steps || 0}\nPickup done: ${stats.pickup_done ? 'Yes' : 'No'}\nDelivery done: ${stats.delivery_done ? 'Yes' : 'No'}\nPartial route: ${routeNames.join(' → ')}`;
+          const failMsg = `Mission failed!\nReason: ${stats.termination_reason || 'Unknown'}\nSteps taken: ${stats.steps || 0}\nPickup done: ${stats.pickup_done ? 'Yes' : 'No'}\nDelivery done: ${stats.delivery_done ? 'Yes' : 'No'}\nPartial route: ${routeNames.join(' → ')}`;
           alert(failMsg);
         }
       } else {
